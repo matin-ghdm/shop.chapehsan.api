@@ -14,6 +14,10 @@ const options = {
         url: "http://localhost:3000",
         description: "Local server",
       },
+      {
+        url: "https://shop-chapehsan-api.onrender.com",
+        description: "Production (Render)",
+      },
     ],
     tags: [
       { name: "General", description: "Health and system" },

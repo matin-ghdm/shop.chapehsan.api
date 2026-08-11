@@ -153,7 +153,7 @@ async function updateUser(id, payload = {}) {
     throw error;
   }
 
-  const { name, lname, phone, email, password } = payload;
+  const { name, lname, phone, email, password, role } = payload;
 
   if (phone && phone !== current.phone) {
     const taken = await findByPhone(phone);
@@ -192,6 +192,16 @@ async function updateUser(id, payload = {}) {
     }
     fields.push(`password_hash = $${i++}`);
     values.push(await bcrypt.hash(password, 10));
+  }
+  if (role !== undefined) {
+    const normalized = String(role).trim().toLowerCase();
+    if (normalized !== "admin" && normalized !== "user") {
+      const error = new Error("نقش باید admin یا user باشد");
+      error.status = 400;
+      throw error;
+    }
+    fields.push(`role = $${i++}`);
+    values.push(normalized);
   }
 
   if (fields.length === 0) {

@@ -23,6 +23,8 @@ app.use("/orders", ordersRouter);
 app.use("/order-items", orderItemsRouter);
 app.use("/addresses", addressesRouter);
 app.use("/slides", slidesRouter);
+app.use("/downloads", require("./routes/downloads"));
+app.use("/designs", require("./routes/designs"));
 
 /**
  * @openapi

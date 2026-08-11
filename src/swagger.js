@@ -24,6 +24,8 @@ const options = {
       { name: "Users", description: "User registration, login and CRUD" },
       { name: "Addresses", description: "User addresses CRUD" },
       { name: "Slides", description: "Homepage / design slider" },
+      { name: "Downloads", description: "Downloadable files" },
+      { name: "Designs", description: "Design catalog" },
       { name: "Orders", description: "Order CRUD" },
       { name: "OrderItems", description: "Order items CRUD" },
       { name: "Database", description: "Database helpers" },
@@ -81,6 +83,37 @@ const options = {
             caption: { type: "string", nullable: true },
             link: { type: "string", nullable: true },
             sort_order: { type: "integer", example: 0 },
+            is_active: { type: "boolean", example: true },
+            created_at: { type: "string", format: "date-time" },
+          },
+        },
+        Download: {
+          type: "object",
+          properties: {
+            id: { type: "string", format: "uuid" },
+            name: { type: "string", example: "لایه نقشه کربلا" },
+            description: { type: "string", nullable: true },
+            type: { type: "string", enum: ["layer", "pdf", "map", "other"], example: "pdf" },
+            file_path: { type: "string", example: "/uploads/downloads/file.pdf" },
+            format: { type: "string", nullable: true, example: "pdf" },
+            is_protected: { type: "boolean", example: false },
+            uploaded_at: { type: "string", format: "date-time" },
+          },
+        },
+        Design: {
+          type: "object",
+          properties: {
+            id: { type: "string", format: "uuid" },
+            code: { type: "string", example: "KRB-001" },
+            type: {
+              type: "string",
+              enum: ["taslit", "stand", "hajj", "karbala", "davati", "hamdardi", "sarbarg"],
+              example: "karbala",
+            },
+            category: { type: "string", nullable: true, example: "کربلا" },
+            title: { type: "string", example: "طرح کربلا 1" },
+            image_path: { type: "string", example: "/uploads/designs/karbala-1.jpg" },
+            price: { type: "integer", example: 250000 },
             is_active: { type: "boolean", example: true },
             created_at: { type: "string", format: "date-time" },
           },
@@ -307,6 +340,11 @@ const options = {
                     phone: { type: "string" },
                     email: { type: "string" },
                     password: { type: "string", format: "password" },
+                    role: {
+                      type: "string",
+                      enum: ["user", "admin"],
+                      description: "Admin only",
+                    },
                   },
                 },
               },
@@ -710,6 +748,432 @@ const options = {
           },
         },
       },
+      "/downloads": {
+        get: {
+          tags: ["Downloads"],
+          summary: "List downloads (public; protected hide file_path without token)",
+          parameters: [
+            {
+              in: "query",
+              name: "type",
+              schema: { type: "string", enum: ["layer", "pdf", "map", "other"] },
+            },
+          ],
+          responses: {
+            200: {
+              description: "Downloads list",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      downloads: {
+                        type: "array",
+                        items: { $ref: "#/components/schemas/Download" },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        post: {
+          tags: ["Downloads"],
+          summary: "Create download (admin)",
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["name", "type", "file_path"],
+                  properties: {
+                    name: { type: "string" },
+                    description: { type: "string" },
+                    type: { type: "string", enum: ["layer", "pdf", "map", "other"] },
+                    file_path: { type: "string" },
+                    format: { type: "string" },
+                    is_protected: { type: "boolean", example: false },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            201: {
+              description: "Download created",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: { download: { $ref: "#/components/schemas/Download" } },
+                  },
+                },
+              },
+            },
+            403: { description: "Admin only" },
+          },
+        },
+      },
+      "/downloads/{id}": {
+        get: {
+          tags: ["Downloads"],
+          summary: "Get download by id (token required if protected)",
+          parameters: [
+            {
+              in: "path",
+              name: "id",
+              required: true,
+              schema: { type: "string", format: "uuid" },
+            },
+          ],
+          responses: {
+            200: {
+              description: "Download details",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: { download: { $ref: "#/components/schemas/Download" } },
+                  },
+                },
+              },
+            },
+            401: { description: "Protected file needs login" },
+            404: { description: "Not found" },
+          },
+        },
+        put: {
+          tags: ["Downloads"],
+          summary: "Update download (admin)",
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              in: "path",
+              name: "id",
+              required: true,
+              schema: { type: "string", format: "uuid" },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    name: { type: "string" },
+                    description: { type: "string" },
+                    type: { type: "string", enum: ["layer", "pdf", "map", "other"] },
+                    file_path: { type: "string" },
+                    format: { type: "string" },
+                    is_protected: { type: "boolean" },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            200: {
+              description: "Download updated",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: { download: { $ref: "#/components/schemas/Download" } },
+                  },
+                },
+              },
+            },
+            403: { description: "Admin only" },
+          },
+        },
+        delete: {
+          tags: ["Downloads"],
+          summary: "Delete download (admin)",
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              in: "path",
+              name: "id",
+              required: true,
+              schema: { type: "string", format: "uuid" },
+            },
+          ],
+          responses: {
+            200: { description: "Download deleted" },
+            403: { description: "Admin only" },
+            404: { description: "Not found" },
+          },
+        },
+      },
+      "/designs": {
+        get: {
+          tags: ["Designs"],
+          summary: "List active designs (public)",
+          parameters: [
+            {
+              in: "query",
+              name: "type",
+              schema: {
+                type: "string",
+                enum: ["taslit", "stand", "hajj", "karbala", "davati", "hamdardi", "sarbarg"],
+              },
+            },
+            { in: "query", name: "category", schema: { type: "string" } },
+          ],
+          responses: {
+            200: {
+              description: "Active designs",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      designs: {
+                        type: "array",
+                        items: { $ref: "#/components/schemas/Design" },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        post: {
+          tags: ["Designs"],
+          summary: "Create design (admin)",
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["code", "type", "title", "image_path", "price"],
+                  properties: {
+                    code: { type: "string", example: "KRB-001" },
+                    type: {
+                      type: "string",
+                      enum: ["taslit", "stand", "hajj", "karbala", "davati", "hamdardi", "sarbarg"],
+                    },
+                    category: { type: "string" },
+                    title: { type: "string" },
+                    image_path: { type: "string" },
+                    price: { type: "integer", example: 250000 },
+                    is_active: { type: "boolean", example: true },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            201: {
+              description: "Design created",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: { design: { $ref: "#/components/schemas/Design" } },
+                  },
+                },
+              },
+            },
+            403: { description: "Admin only" },
+            409: { description: "Duplicate type+code" },
+          },
+        },
+      },
+      "/designs/admin/all": {
+        get: {
+          tags: ["Designs"],
+          summary: "List all designs including inactive (admin)",
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              in: "query",
+              name: "type",
+              schema: {
+                type: "string",
+                enum: ["taslit", "stand", "hajj", "karbala", "davati", "hamdardi", "sarbarg"],
+              },
+            },
+            { in: "query", name: "category", schema: { type: "string" } },
+          ],
+          responses: {
+            200: {
+              description: "All designs",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      designs: {
+                        type: "array",
+                        items: { $ref: "#/components/schemas/Design" },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      "/designs/type/{type}/price": {
+        put: {
+          tags: ["Designs"],
+          summary: "Update price for all designs of a type (admin)",
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              in: "path",
+              name: "type",
+              required: true,
+              schema: {
+                type: "string",
+                enum: ["taslit", "stand", "hajj", "karbala", "davati", "hamdardi", "sarbarg"],
+              },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["price"],
+                  properties: {
+                    price: { type: "integer", example: 300000 },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            200: {
+              description: "Prices updated",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      message: { type: "string" },
+                      type: { type: "string" },
+                      price: { type: "integer" },
+                      updated_count: { type: "integer" },
+                      designs: {
+                        type: "array",
+                        items: { $ref: "#/components/schemas/Design" },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            404: { description: "No designs for this type" },
+          },
+        },
+      },
+      "/designs/{id}": {
+        get: {
+          tags: ["Designs"],
+          summary: "Get active design by code (public)",
+          parameters: [
+            {
+              in: "path",
+              name: "id",
+              required: true,
+              schema: { type: "string" },
+            },
+          ],
+          responses: {
+            200: {
+              description: "Design details",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: { design: { $ref: "#/components/schemas/Design" } },
+                  },
+                },
+              },
+            },
+            404: { description: "Not found" },
+          },
+        },
+        put: {
+          tags: ["Designs"],
+          summary: "Update design (admin)",
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              in: "path",
+              name: "id",
+              required: true,
+              schema: { type: "string", format: "uuid" },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    code: { type: "string" },
+                    type: {
+                      type: "string",
+                      enum: ["taslit", "stand", "hajj", "karbala", "davati", "hamdardi", "sarbarg"],
+                    },
+                    category: { type: "string" },
+                    title: { type: "string" },
+                    image_path: { type: "string" },
+                    price: { type: "integer" },
+                    is_active: { type: "boolean" },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            200: {
+              description: "Design updated",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: { design: { $ref: "#/components/schemas/Design" } },
+                  },
+                },
+              },
+            },
+            403: { description: "Admin only" },
+            409: { description: "Duplicate type+code" },
+          },
+        },
+        delete: {
+          tags: ["Designs"],
+          summary: "Delete design (admin)",
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              in: "path",
+              name: "id",
+              required: true,
+              schema: { type: "string", format: "uuid" },
+            },
+          ],
+          responses: {
+            200: { description: "Design deleted" },
+            403: { description: "Admin only" },
+            404: { description: "Not found" },
+          },
+        },
+      },
       "/orders": {
         get: {
           tags: ["Orders"],
@@ -1076,6 +1540,8 @@ const options = {
     path.join(__dirname, "routes", "users.js"),
     path.join(__dirname, "routes", "addresses.js"),
     path.join(__dirname, "routes", "slides.js"),
+    path.join(__dirname, "routes", "downloads.js"),
+    path.join(__dirname, "routes", "designs.js"),
     path.join(__dirname, "routes", "orders.js"),
     path.join(__dirname, "routes", "orderItems.js"),
   ],

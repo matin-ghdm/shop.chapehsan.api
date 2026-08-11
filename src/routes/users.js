@@ -65,7 +65,13 @@ router.put("/:id", authenticate, async (req, res) => {
       return res.status(403).json({ message: "Forbidden" });
     }
 
-    const user = await usersService.updateUser(req.params.id, req.body);
+    const payload = { ...(req.body || {}) };
+    // Only admins may change roles (prevents self-escalation).
+    if (req.user.role !== "admin") {
+      delete payload.role;
+    }
+
+    const user = await usersService.updateUser(req.params.id, payload);
     res.json({ user });
   } catch (err) {
     res.status(err.status || 500).json({

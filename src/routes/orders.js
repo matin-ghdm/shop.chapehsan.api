@@ -10,11 +10,20 @@ router.use(authenticate);
 router.get("/", async (req, res) => {
   try {
     const userId = req.user.role === "admin" ? req.query.user_id || null : req.user.id;
-    const orders = await ordersService.listOrders({
+    const result = await ordersService.listOrders({
       userId,
       status: req.query.status || null,
+      q: req.query.q || null,
+      from: req.query.from || null,
+      to: req.query.to || null,
+      isPickup: req.query.is_pickup ?? null,
+      page: req.query.page !== undefined ? req.query.page : null,
+      limit: req.query.limit !== undefined ? req.query.limit : null,
+      since: req.query.since || null,
+      includeItems:
+        req.query.include_items === "true" || req.query.include_items === "1",
     });
-    res.json({ orders });
+    res.json(result);
   } catch (err) {
     res.status(err.status || 500).json({
       message: err.message || "خطا در دریافت سفارش‌ها",

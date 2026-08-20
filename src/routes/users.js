@@ -36,7 +36,7 @@ router.post("/login", async (req, res) => {
     res.json(result);
   } catch (err) {
     res.status(err.status || 500).json({
-      message: err.message || "Login failed",
+      message: err.message || "ورود ناموفق بود",
     });
   }
 });

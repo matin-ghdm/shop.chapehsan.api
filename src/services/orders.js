@@ -33,9 +33,35 @@ async function getItemsByOrderId(orderId, client = null) {
   return result.rows;
 }
 
+async function attachItemsToOrders(orders) {
+  if (!orders.length) return orders;
+
+  const result = await query(
+    `SELECT id, order_id, design_id, quantity, unit_price, custom_data, item_note
+     FROM order_items
+     WHERE order_id = ANY($1::uuid[])
+     ORDER BY order_id, id`,
+    [orders.map((order) => order.id)]
+  );
+
+  const itemsByOrderId = new Map();
+  for (const item of result.rows) {
+    const list = itemsByOrderId.get(item.order_id) || [];
+    list.push(item);
+    itemsByOrderId.set(item.order_id, list);
+  }
+
+  return orders.map((order) => ({
+    ...order,
+    items: itemsByOrderId.get(order.id) || [],
+  }));
+}
+
 async function findById(id) {
   const result = await query(
-    `SELECT ${ORDER_COLUMNS} FROM orders WHERE id = $1`,
+    `SELECT ${ORDER_COLUMNS_ALIASED}, ${ORDER_USER_FIELDS}
+     ${ORDER_FROM_WITH_USER}
+     WHERE o.id = $1`,
     [id]
   );
   return result.rows[0] || null;
@@ -48,29 +74,149 @@ async function getOrderWithItems(id) {
   return { ...order, items };
 }
 
-async function listOrders({ userId = null, status = null } = {}) {
+const ORDER_COLUMNS_ALIASED = ORDER_COLUMNS.split(", ")
+  .map((column) => `o.${column.trim()}`)
+  .join(", ");
+
+const ORDER_USER_FIELDS = `
+  TRIM(CONCAT(COALESCE(u.name, ''), ' ', COALESCE(u.lname, ''))) AS user_name,
+  u.phone AS user_phone`;
+
+const ORDER_FROM_WITH_USER =
+  "FROM orders o LEFT JOIN users u ON u.id = o.user_id";
+
+function parsePickupFilter(value) {
+  if (value === null || value === undefined || value === "") return null;
+  if (value === true || value === "true" || value === "1") return true;
+  if (value === false || value === "false" || value === "0") return false;
+  return null;
+}
+
+function normalizeAsciiDigits(value) {
+  return String(value)
+    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - "۰".charCodeAt(0)))
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - "٠".charCodeAt(0)));
+}
+
+async function listOrders({
+  userId = null,
+  status = null,
+  q = null,
+  from = null,
+  to = null,
+  isPickup = null,
+  page = null,
+  limit = null,
+  since = null,
+  includeItems = false,
+} = {}) {
   const conditions = [];
   const values = [];
   let i = 1;
 
   if (userId) {
-    conditions.push(`user_id = $${i++}`);
+    conditions.push(`o.user_id = $${i++}`);
     values.push(userId);
   }
   if (status) {
-    conditions.push(`status = $${i++}`);
+    conditions.push(`o.status = $${i++}`);
     values.push(status);
   }
 
+  const pickupFilter = parsePickupFilter(isPickup);
+  if (pickupFilter !== null) {
+    conditions.push(`o.is_pickup = $${i++}`);
+    values.push(pickupFilter);
+  }
+
+  if (from) {
+    conditions.push(`o.created_at >= $${i++}::date`);
+    values.push(normalizeAsciiDigits(from));
+  }
+  if (to) {
+    conditions.push(`o.created_at < ($${i++}::date + interval '1 day')`);
+    values.push(normalizeAsciiDigits(to));
+  }
+  if (since) {
+    conditions.push(`o.created_at > $${i++}::timestamptz`);
+    values.push(normalizeAsciiDigits(since));
+  }
+
+  const searchTerm = String(q || "").trim();
+  if (searchTerm) {
+    conditions.push(`(
+      o.id::text ILIKE $${i}
+      OR COALESCE(o.note, '') ILIKE $${i}
+      OR EXISTS (
+        SELECT 1
+        FROM order_items oi
+        WHERE oi.order_id = o.id
+          AND (
+            oi.custom_data::text ILIKE $${i}
+            OR COALESCE(oi.item_note, '') ILIKE $${i}
+          )
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM users u
+        WHERE u.id = o.user_id
+          AND (
+            COALESCE(u.phone, '') ILIKE $${i}
+            OR COALESCE(u.name, '') ILIKE $${i}
+            OR COALESCE(u.lname, '') ILIKE $${i}
+            OR CONCAT(COALESCE(u.name, ''), ' ', COALESCE(u.lname, '')) ILIKE $${i}
+          )
+      )
+    )`);
+    values.push(`%${searchTerm}%`);
+    i++;
+  }
+
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const paginate = page !== null || limit !== null;
+  const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
+  const safePage = Math.max(Number(page) || 1, 1);
+
+  if (paginate) {
+    const countResult = await query(
+      `SELECT COUNT(*)::int AS total FROM orders o ${where}`,
+      values
+    );
+    const total = countResult.rows[0]?.total || 0;
+    const offset = (safePage - 1) * safeLimit;
+
+    const result = await query(
+      `SELECT ${ORDER_COLUMNS_ALIASED}, ${ORDER_USER_FIELDS}
+       ${ORDER_FROM_WITH_USER}
+       ${where}
+       ORDER BY o.created_at DESC
+       LIMIT $${i++} OFFSET $${i++}`,
+      [...values, safeLimit, offset]
+    );
+
+    return {
+      orders: includeItems
+        ? await attachItemsToOrders(result.rows)
+        : result.rows,
+      total,
+      page: safePage,
+      limit: safeLimit,
+      pages: Math.max(Math.ceil(total / safeLimit), 1),
+    };
+  }
+
   const result = await query(
-    `SELECT ${ORDER_COLUMNS}
-     FROM orders
+    `SELECT ${ORDER_COLUMNS_ALIASED}, ${ORDER_USER_FIELDS}
+     ${ORDER_FROM_WITH_USER}
      ${where}
-     ORDER BY created_at DESC`,
+     ORDER BY o.created_at DESC`,
     values
   );
-  return result.rows;
+  return {
+    orders: includeItems
+      ? await attachItemsToOrders(result.rows)
+      : result.rows,
+  };
 }
 
 function validateAddressRule(isPickup, addressId) {

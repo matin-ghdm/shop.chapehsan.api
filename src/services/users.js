@@ -120,21 +120,21 @@ async function register(raw = {}) {
 
 async function login({ phone, password }) {
   if (!phone || !password) {
-    const error = new Error("phone and password are required");
+    const error = new Error("شماره موبایل و رمز عبور الزامی است");
     error.status = 400;
     throw error;
   }
 
   const user = await findByPhone(phone);
   if (!user) {
-    const error = new Error("Invalid phone or password");
+    const error = new Error("شماره موبایل یا رمز عبور اشتباه است");
     error.status = 401;
     throw error;
   }
 
   const ok = await bcrypt.compare(password, user.password_hash);
   if (!ok) {
-    const error = new Error("Invalid phone or password");
+    const error = new Error("شماره موبایل یا رمز عبور اشتباه است");
     error.status = 401;
     throw error;
   }

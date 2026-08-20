@@ -135,6 +135,8 @@ const options = {
           properties: {
             id: { type: "string", format: "uuid" },
             user_id: { type: "string", format: "uuid" },
+            user_name: { type: "string", nullable: true, description: "Customer full name" },
+            user_phone: { type: "string", nullable: true, description: "Customer phone" },
             address_id: { type: "string", format: "uuid", nullable: true },
             is_pickup: { type: "boolean", example: false },
             status: {
@@ -1182,6 +1184,13 @@ const options = {
           parameters: [
             { in: "query", name: "status", schema: { type: "string" } },
             { in: "query", name: "user_id", schema: { type: "string", format: "uuid" }, description: "Admin only" },
+            { in: "query", name: "q", schema: { type: "string" }, description: "Search by order id, note, customer name/phone, or item details" },
+            { in: "query", name: "from", schema: { type: "string", format: "date" }, description: "Created from date (inclusive)" },
+            { in: "query", name: "to", schema: { type: "string", format: "date" }, description: "Created to date (inclusive)" },
+            { in: "query", name: "since", schema: { type: "string", format: "date-time" }, description: "Orders created after this timestamp" },
+            { in: "query", name: "is_pickup", schema: { type: "boolean" }, description: "Filter pickup (true) or delivery (false)" },
+            { in: "query", name: "page", schema: { type: "integer", minimum: 1 }, description: "Page number (enables pagination)" },
+            { in: "query", name: "limit", schema: { type: "integer", minimum: 1, maximum: 100 }, description: "Items per page (default 20)" },
           ],
           responses: {
             200: {
@@ -1195,6 +1204,10 @@ const options = {
                         type: "array",
                         items: { $ref: "#/components/schemas/Order" },
                       },
+                      total: { type: "integer", description: "Total matching orders (when paginated)" },
+                      page: { type: "integer" },
+                      limit: { type: "integer" },
+                      pages: { type: "integer" },
                     },
                   },
                 },

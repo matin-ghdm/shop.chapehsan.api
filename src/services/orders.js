@@ -12,7 +12,7 @@ const ORDER_STATUSES = [
 ];
 
 const ORDER_COLUMNS =
-  "id, user_id, address_id, is_pickup, status, total_price, note, created_at";
+  "id, user_id, address_id, is_pickup, status, total_price, note, created_at, payment_track_id, payment_ref_number, payment_card_number, paid_at";
 
 function httpError(message, status = 400, code = "BAD_REQUEST") {
   const error = new Error(message);

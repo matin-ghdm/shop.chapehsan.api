@@ -25,6 +25,7 @@ app.use("/addresses", addressesRouter);
 app.use("/slides", slidesRouter);
 app.use("/downloads", require("./routes/downloads"));
 app.use("/designs", require("./routes/designs"));
+app.use("/payments", require("./routes/payments"));
 
 /**
  * @openapi

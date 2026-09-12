@@ -155,6 +155,13 @@ app.listen(PORT, async () => {
   console.log(`Server listening on http://localhost:${PORT}`);
   console.log(`Swagger UI: http://localhost:${PORT}/api-docs`);
   try {
+    const { ensureOrderPaymentColumns } = require("./migrations/ensure-order-payments");
+    await ensureOrderPaymentColumns();
+    console.log("Order payment columns ensured");
+  } catch (err) {
+    console.error("Could not ensure payment columns:", err.message);
+  }
+  try {
     const info = await testConnection();
     console.log(`Connected to database "${info.database}" at ${info.now}`);
   } catch (err) {

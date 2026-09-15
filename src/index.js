@@ -19,6 +19,7 @@ app.use(express.json());
 
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.use("/users", usersRouter);
+app.use("/otp", require("./routes/otp"));
 app.use("/orders", ordersRouter);
 app.use("/order-items", orderItemsRouter);
 app.use("/addresses", addressesRouter);
@@ -160,6 +161,13 @@ app.listen(PORT, async () => {
     console.log("Order payment columns ensured");
   } catch (err) {
     console.error("Could not ensure payment columns:", err.message);
+  }
+  try {
+    const { ensureOtpCodesTable } = require("./migrations/ensure-otp-codes");
+    await ensureOtpCodesTable();
+    console.log("OTP codes table ensured");
+  } catch (err) {
+    console.error("Could not ensure OTP table:", err.message);
   }
   try {
     const info = await testConnection();

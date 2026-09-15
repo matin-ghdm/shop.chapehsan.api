@@ -1,6 +1,7 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { query } = require("../db");
+const otpService = require("./otp");
 
 const JWT_SECRET = process.env.JWT_SECRET || "chapehsan-secret-change-me";
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "7d";
@@ -58,6 +59,7 @@ async function register(raw = {}) {
   const phone = String(raw.phone ?? raw.mobile ?? "").trim();
   const email = raw.email ? String(raw.email).trim() : null;
   const password = raw.password;
+  const otpToken = raw.otpToken ?? raw.verificationToken ?? null;
 
   if (!name || !lname || !phone || !password) {
     const missing = [];
@@ -81,9 +83,11 @@ async function register(raw = {}) {
     throw error;
   }
 
+  otpService.assertVerificationToken(otpToken, phone, "register");
+
   const existing = await findByPhone(phone);
   if (existing) {
-    const error = new Error("این شماره موبایل قبلاً ثبت شده است");
+    const error = new Error("این شماره قبلاً ثبت‌نام کرده است. لطفاً وارد شوید");
     error.status = 409;
     error.code = "PHONE_EXISTS";
     throw error;
@@ -105,7 +109,7 @@ async function register(raw = {}) {
     };
   } catch (err) {
     if (err.code === "23505") {
-      const error = new Error("این شماره موبایل قبلاً ثبت شده است");
+      const error = new Error("این شماره قبلاً ثبت‌نام کرده است. لطفاً وارد شوید");
       error.status = 409;
       error.code = "PHONE_EXISTS";
       throw error;

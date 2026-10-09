@@ -26,6 +26,9 @@ app.use("/addresses", addressesRouter);
 app.use("/slides", slidesRouter);
 app.use("/downloads", require("./routes/downloads"));
 app.use("/designs", require("./routes/designs"));
+app.use("/favorites", require("./routes/favorites"));
+app.use("/admin", require("./routes/admin"));
+app.use("/reviews", require("./routes/reviews"));
 app.use("/payments", require("./routes/payments"));
 
 /**
@@ -168,6 +171,20 @@ app.listen(PORT, async () => {
     console.log("OTP codes table ensured");
   } catch (err) {
     console.error("Could not ensure OTP table:", err.message);
+  }
+  try {
+    const { ensureUserFavoritesTable } = require("./migrations/ensure-user-favorites");
+    await ensureUserFavoritesTable();
+    console.log("User favorites table ensured");
+  } catch (err) {
+    console.error("Could not ensure favorites table:", err.message);
+  }
+  try {
+    const { ensureProductReviewsTable } = require("./migrations/ensure-product-reviews");
+    await ensureProductReviewsTable();
+    console.log("Product reviews table ensured");
+  } catch (err) {
+    console.error("Could not ensure product reviews table:", err.message);
   }
   try {
     const info = await testConnection();

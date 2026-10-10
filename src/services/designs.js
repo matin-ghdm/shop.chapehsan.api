@@ -13,7 +13,7 @@ const DESIGN_TYPES = [
 ];
 
 const DESIGN_COLUMNS =
-  "id, code, type, category, title, image_path, image_paths, banner_text, price, is_active, created_at";
+  "id, code, type, category, title, image_path, image_paths, banner_text, price, is_active, created_at, updated_at";
 
 function bannerText(value) {
   if (value === undefined) return "";
@@ -114,7 +114,11 @@ async function listDesigns({
 
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const result = await query(
-    `SELECT ${DESIGN_COLUMNS}
+    `SELECT ${DESIGN_COLUMNS},
+       COALESCE((SELECT SUM(oi.quantity) FROM order_items oi
+         JOIN orders o ON o.id = oi.order_id
+         WHERE oi.design_id = designs.id AND o.status <> 'canceled'
+           AND (o.paid_at IS NOT NULL OR o.status = 'paid')), 0) AS sales_count
      FROM designs
      ${where}
      ORDER BY created_at DESC`,
@@ -250,7 +254,7 @@ async function updateDesign(id, payload) {
   values.push(id);
   try {
     const result = await query(
-      `UPDATE designs SET ${fields.join(", ")}
+      `UPDATE designs SET ${fields.join(", ")}, updated_at = NOW()
        WHERE id = $${i}
        RETURNING ${DESIGN_COLUMNS}`,
       values
@@ -290,7 +294,7 @@ async function updatePriceByType(type, price) {
   }
 
   const result = await query(
-    `UPDATE designs SET price = $1
+    `UPDATE designs SET price = $1, updated_at = NOW()
      WHERE type = $2
      RETURNING ${DESIGN_COLUMNS}`,
     [newPrice, type]

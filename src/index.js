@@ -155,7 +155,10 @@ app.get("/tables", async (_req, res) => {
   }
 });
 
-app.listen(PORT, async () => {
+async function startServer() {
+  const { ensureDesignImagesColumn } = require("./migrations/ensure-design-images");
+  await ensureDesignImagesColumn();
+  app.listen(PORT, async () => {
   console.log(`Server listening on http://localhost:${PORT}`);
   console.log(`Swagger UI: http://localhost:${PORT}/api-docs`);
   try {
@@ -192,4 +195,10 @@ app.listen(PORT, async () => {
   } catch (err) {
     console.error("Could not connect to PostgreSQL:", err.message);
   }
+  });
+}
+
+startServer().catch((err) => {
+  console.error("Could not prepare design images:", err.message);
+  process.exitCode = 1;
 });

@@ -8,16 +8,38 @@ const DESIGN_TYPES = [
   "davati",
   "hamdardi",
   "sarbarg",
+  "occasion",
+  "laser",
 ];
 
 const DESIGN_COLUMNS =
-  "id, code, type, category, title, image_path, price, is_active, created_at";
+  "id, code, type, category, title, image_path, image_paths, price, is_active, created_at";
+
+function designImagePaths(primary, paths) {
+  if (paths !== undefined && (!Array.isArray(paths) || paths.some((path) => typeof path !== "string" || !path.trim()))) {
+    throw httpError("image_paths باید آرایه‌ای از آدرس تصاویر باشد", 400, "VALIDATION_ERROR");
+  }
+  const images = [...new Set([String(primary).trim(), ...(paths || []).map((path) => path.trim())])];
+  if (!images[0] || images.length > 3 || (paths && paths.length > 3)) {
+    throw httpError("هر محصول باید بین یک تا سه تصویر داشته باشد", 400, "VALIDATION_ERROR");
+  }
+  return images;
+}
 
 function httpError(message, status = 400, code = "BAD_REQUEST") {
   const error = new Error(message);
   error.status = status;
   error.code = code;
   return error;
+}
+
+function invalidTypeError(type) {
+  const received = type === undefined || type === null || type === "" ? "خالی" : String(type);
+  return httpError(
+    `فیلد «نوع محصول» نامعتبر است. مقدار دریافت‌شده: «${received}». مقادیر مجاز: ${DESIGN_TYPES.join(", ")}`,
+    400,
+    "INVALID_TYPE"
+  );
 }
 
 async function findById(id) {
@@ -67,7 +89,7 @@ async function listDesigns({
 
   if (type) {
     if (!DESIGN_TYPES.includes(type)) {
-      throw httpError("type نامعتبر است", 400, "INVALID_TYPE");
+      throw invalidTypeError(type);
     }
     conditions.push(`type = $${i++}`);
     values.push(type);
@@ -102,7 +124,7 @@ async function createDesign(payload) {
     );
   }
   if (!DESIGN_TYPES.includes(payload.type)) {
-    throw httpError("type نامعتبر است", 400, "INVALID_TYPE");
+    throw invalidTypeError(payload.type);
   }
 
   const price =
@@ -114,10 +136,11 @@ async function createDesign(payload) {
   }
 
   try {
+    const images = designImagePaths(payload.image_path, payload.image_paths);
     const result = await query(
       `INSERT INTO designs
-         (code, type, category, title, image_path, price, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+         (code, type, category, title, image_path, price, is_active, image_paths)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING ${DESIGN_COLUMNS}`,
       [
         String(payload.code).trim(),
@@ -127,6 +150,7 @@ async function createDesign(payload) {
         String(payload.image_path).trim(),
         price,
         payload.is_active !== undefined ? Boolean(payload.is_active) : true,
+        images,
       ]
     );
     return result.rows[0];
@@ -149,7 +173,7 @@ async function updateDesign(id, payload) {
   }
 
   if (payload.type !== undefined && !DESIGN_TYPES.includes(payload.type)) {
-    throw httpError("type نامعتبر است", 400, "INVALID_TYPE");
+    throw invalidTypeError(payload.type);
   }
 
   const fields = [];
@@ -184,6 +208,14 @@ async function updateDesign(id, payload) {
     }
     fields.push(`image_path = $${i++}`);
     values.push(String(payload.image_path).trim());
+  }
+  if (payload.image_paths !== undefined || payload.image_path !== undefined) {
+    const images = designImagePaths(
+      payload.image_path ?? current.image_path,
+      payload.image_paths ?? (current.image_paths || []).slice(1)
+    );
+    fields.push(`image_paths = $${i++}`);
+    values.push(images);
   }
   if (payload.price !== undefined) {
     const price = Number(payload.price);
@@ -236,7 +268,7 @@ async function deleteDesign(id) {
 
 async function updatePriceByType(type, price) {
   if (!DESIGN_TYPES.includes(type)) {
-    throw httpError("type نامعتبر است", 400, "INVALID_TYPE");
+    throw invalidTypeError(type);
   }
 
   const newPrice = Number(price);

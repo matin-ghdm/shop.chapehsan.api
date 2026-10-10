@@ -84,7 +84,8 @@ router.post("/zibal/verify", async (req, res) => {
     }
 
     const orderResult = await query(
-      `SELECT id, user_id, status, total_price, payment_track_id, payment_ref_number
+      `SELECT id, user_id, status, total_price, payment_track_id, payment_ref_number,
+              (SELECT download_id FROM download_purchases WHERE order_id=orders.id) AS download_id
        FROM orders
        WHERE payment_track_id = $1
        LIMIT 1`,
@@ -100,6 +101,7 @@ router.post("/zibal/verify", async (req, res) => {
         ok: true,
         alreadyPaid: true,
         orderId: order.id,
+        downloadId: order.download_id || undefined,
         refNumber: order.payment_ref_number,
         message: "پرداخت قبلاً تایید شده است",
       });
@@ -109,6 +111,7 @@ router.post("/zibal/verify", async (req, res) => {
       return res.json({
         ok: false,
         orderId: order.id,
+        downloadId: order.download_id || undefined,
         message: "پرداخت توسط کاربر لغو یا ناموفق شد",
         code: "PAYMENT_FAILED",
       });
@@ -136,6 +139,7 @@ router.post("/zibal/verify", async (req, res) => {
       return res.json({
         ok: true,
         orderId: order.id,
+        downloadId: order.download_id || undefined,
         refNumber: verify.refNumber || order.payment_ref_number || null,
         cardNumber: verify.cardNumber || null,
         message:
@@ -146,6 +150,7 @@ router.post("/zibal/verify", async (req, res) => {
     res.json({
       ok: false,
       orderId: order.id,
+      downloadId: order.download_id || undefined,
       result,
       message:
         zibal.VERIFY_RESULT_FA[result] ||

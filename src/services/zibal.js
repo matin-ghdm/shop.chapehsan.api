@@ -74,6 +74,10 @@ async function requestPayment({
   const data = await zibalPost("/v1/request", payload);
 
   if (Number(data.result) !== 100 || !data.trackId) {
+    if (Number(data.result) === 115) {
+      console.error("Zibal server IP rejected:", data.message);
+      throw httpError("اتصال به درگاه پرداخت ممکن نشد. لطفاً با پشتیبانی سایت تماس بگیرید.", 503, "PAYMENT_CONFIG");
+    }
     throw httpError(
       data.message || `خطا در ایجاد پرداخت (${data.result || "?"})`,
       400,

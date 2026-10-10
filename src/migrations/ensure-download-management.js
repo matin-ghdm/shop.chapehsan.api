@@ -24,7 +24,21 @@ async function ensureDownloadManagement() {
       ADD COLUMN IF NOT EXISTS dimensions TEXT,
       ADD COLUMN IF NOT EXISTS software TEXT,
       ADD COLUMN IF NOT EXISTS usage_guide TEXT,
-      ADD COLUMN IF NOT EXISTS usage_terms TEXT`);
+      ADD COLUMN IF NOT EXISTS usage_terms TEXT,
+      ADD COLUMN IF NOT EXISTS is_paid BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS price BIGINT NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS file_key TEXT,
+      ADD COLUMN IF NOT EXISTS file_source TEXT`);
+    await client.query(`CREATE TABLE IF NOT EXISTS download_purchases (
+      order_id UUID PRIMARY KEY REFERENCES orders(id) ON DELETE RESTRICT,
+      download_id UUID NOT NULL REFERENCES downloads(id) ON DELETE RESTRICT,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      amount BIGINT NOT NULL CHECK (amount >= 100),
+      name TEXT NOT NULL,
+      paid_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
+    await client.query(`CREATE INDEX IF NOT EXISTS download_purchases_owner ON download_purchases(user_id, download_id)`);
     if (!existing.rowCount) {
       await client.query(`UPDATE downloads SET requires_login=is_protected, archive_password=CASE WHEN is_protected THEN 'chapehsan.com' ELSE NULL END`);
     }

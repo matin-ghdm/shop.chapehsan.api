@@ -36,6 +36,9 @@ router.post("/zibal/request", authenticate, async (req, res) => {
       );
     }
 
+    const digital = await query('SELECT amount FROM download_purchases WHERE order_id=$1',[order.id]);
+    if (digital.rowCount && process.env.NODE_ENV==='production' && (!process.env.ZIBAL_MERCHANT || process.env.ZIBAL_MERCHANT==='zibal')) throw httpError('درگاه واقعی خرید فایل هنوز تنظیم نشده است',503,'PAYMENT_CONFIG');
+    if (digital.rowCount && Number(digital.rows[0].amount)!==Number(order.total_price)) throw httpError('مبلغ سفارش فایل نامعتبر است');
     const payment = await zibal.requestPayment({
       amountToman: order.total_price,
       orderId: order.id,
@@ -115,13 +118,14 @@ router.post("/zibal/verify", async (req, res) => {
     const result = Number(verify.result);
 
     if (result === 100 || result === 201) {
+      if (verify.amount != null && Number(verify.amount)!==Number(order.total_price)*10) throw httpError('مبلغ تأییدشده با سفارش مطابقت ندارد',400,'AMOUNT_MISMATCH');
       await query(
-        `UPDATE orders
+        `WITH paid AS (UPDATE orders
          SET status = 'paid',
              payment_ref_number = COALESCE($1, payment_ref_number),
              payment_card_number = COALESCE($2, payment_card_number),
              paid_at = COALESCE(paid_at, NOW())
-         WHERE id = $3`,
+         WHERE id = $3 RETURNING id) UPDATE download_purchases SET paid_at=COALESCE(paid_at,NOW()) WHERE order_id IN (SELECT id FROM paid)`,
         [
           verify.refNumber ? String(verify.refNumber) : null,
           verify.cardNumber ? String(verify.cardNumber) : null,

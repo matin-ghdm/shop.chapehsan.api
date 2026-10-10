@@ -2,6 +2,7 @@ const express = require("express");
 const downloadsService = require("../services/downloads");
 const { authenticate } = require("../middleware/auth");
 
+const purchases = require("../services/download-purchases");
 const router = express.Router();
 
 function requireAdmin(req, res, next) {
@@ -34,7 +35,7 @@ router.get("/", optionalAuth, async (req, res) => {
     res.json({
       downloads: downloads.map((row) =>
         downloadsService.toPublicDownload(row, {
-          hideFilePath: row.requires_login && !isLoggedIn,
+          hideFilePath: req.user?.role !== "admin" && (row.is_paid || (row.requires_login && !isLoggedIn)),
         })
       ),
     });
@@ -46,6 +47,12 @@ router.get("/", optionalAuth, async (req, res) => {
   }
 });
 
+router.get('/purchases/mine', authenticate, async (req,res) => {
+  try {res.json({purchases:await purchases.list(req.user.id)});} catch(err) {res.status(500).json({message:'دریافت خریدها ناموفق بود'});}
+});
+router.post('/:id/purchase', authenticate, async (req,res) => {
+  try {res.json(await purchases.create(req.user.id,req.params.id));} catch(err) {res.status(err.status || 500).json({message:err.message});}
+});
 router.get("/:id", optionalAuth, async (req, res) => {
   try {
     const download = await downloadsService.findById(req.params.id);
@@ -61,7 +68,7 @@ router.get("/:id", optionalAuth, async (req, res) => {
       });
     }
 
-    res.json({ download: downloadsService.toPublicDownload(download) });
+    res.json({ download: downloadsService.toPublicDownload(download, {hideFilePath: download.is_paid && req.user?.role !== "admin", includeSource:req.user?.role === "admin"}) });
   } catch (err) {
     res.status(err.status || 500).json({
       message: err.message || "خطا در دریافت دانلود",
@@ -73,10 +80,12 @@ router.get("/:id", optionalAuth, async (req, res) => {
 router.post("/:id/access", optionalAuth, async (req, res) => {
   try {
     const item = await downloadsService.findById(req.params.id);
-    if (!item || !item.is_active) return res.status(404).json({message:"فایل در دسترس نیست"});
-    if (item.requires_login && !req.user) return res.status(401).json({message:"برای دانلود وارد حساب شوید"});
+    if (!item || (!item.is_active && req.user?.role !== "admin")) return res.status(404).json({message:"فایل در دسترس نیست"});
+    if ((item.requires_login || item.is_paid) && !req.user) return res.status(401).json({message:"برای دانلود وارد حساب شوید"});
+    if (item.is_paid && req.user?.role !== 'admin' && !(await purchases.owns(req.user.id,item.id))) return res.status(402).json({message:'برای دریافت فایل ابتدا خرید را کامل کنید'});
+    if (item.is_paid && !item.file_key) return res.status(503).json({message:'فایل برای دریافت آماده نیست'});
     await require("../db").query("UPDATE downloads SET download_count = download_count + 1 WHERE id=$1", [item.id]);
-    res.json({file_path: item.file_path});
+    res.set("Cache-Control","private, no-store").json({file_path: item.file_path, file_key:item.file_key || undefined, name:item.name,format:item.format});
   } catch (error) { res.status(error.status || 500).json({message:"دریافت فایل ناموفق بود"}); }
 });
 

@@ -376,6 +376,8 @@ async function createOrder(payload, currentUser) {
 }
 
 async function updateOrder(id, payload) {
+  const digital = await query('SELECT 1 FROM download_purchases WHERE order_id=$1',[id]);
+  if (digital.rowCount) throw httpError('سفارش فایل دیجیتال قابل تغییر نیست',403);
   const current = await findById(id);
   if (!current) {
     throw httpError("سفارش پیدا نشد", 404, "NOT_FOUND");

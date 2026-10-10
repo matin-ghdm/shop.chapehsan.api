@@ -1,9 +1,9 @@
 const { query } = require("../db");
 
-const DOWNLOAD_TYPES = ["layer", "pdf", "map", "other"];
+const DOWNLOAD_TYPES = ["layer", "pdf", "image", "banner", "tasliat", "map", "other"];
 
 const DOWNLOAD_COLUMNS =
-  "id, name, description, type, file_path, format, is_protected, uploaded_at";
+  "id, name, description, type, file_path, format, is_protected, uploaded_at, is_active, requires_login, archive_password, preview_path, size_bytes, download_count, updated_at, dimensions, software, usage_guide, usage_terms";
 
 function httpError(message, status = 400, code = "BAD_REQUEST") {
   const error = new Error(message);
@@ -22,6 +22,9 @@ function toPublicDownload(row, { hideFilePath = false } = {}) {
     format: row.format,
     is_protected: row.is_protected,
     uploaded_at: row.uploaded_at,
+    is_active: row.is_active, requires_login: row.requires_login, archive_password: row.archive_password,
+    preview_path: row.preview_path, size_bytes: row.size_bytes, download_count: Number(row.download_count), updated_at: row.updated_at,
+    dimensions: row.dimensions, software: row.software, usage_guide: row.usage_guide, usage_terms: row.usage_terms,
   };
   if (!hideFilePath) {
     item.file_path = row.file_path;
@@ -37,11 +40,12 @@ async function findById(id) {
   return result.rows[0] || null;
 }
 
-async function listDownloads({ type = null, protectedOnly = null } = {}) {
+async function listDownloads({ type = null, protectedOnly = null, includeInactive = false } = {}) {
   const conditions = [];
   const values = [];
   let i = 1;
 
+  if (!includeInactive) conditions.push("is_active = TRUE");
   if (type) {
     if (!DOWNLOAD_TYPES.includes(type)) {
       throw httpError("type نامعتبر است", 400, "INVALID_TYPE");
@@ -67,8 +71,23 @@ async function listDownloads({ type = null, protectedOnly = null } = {}) {
   return result.rows;
 }
 
+function validateMetadata(payload) {
+  for (const key of ["is_active", "requires_login", "is_protected"]) {
+    if (payload[key] !== undefined && typeof payload[key] !== "boolean") throw httpError("وضعیت نامعتبر است");
+  }
+  if (payload.size_bytes != null && (!Number.isSafeInteger(Number(payload.size_bytes)) || Number(payload.size_bytes) < 0)) throw httpError("حجم نامعتبر است");
+}
+function validateLinks(payload) {
+  for (const key of ["file_path", "preview_path"]) {
+    if (!payload[key]) continue;
+    const value = String(payload[key]).trim();
+    if (!( /^https?:\/\/[^\s]+$/i.test(value) || /^\/(?![\/\\])[^\s\\]+$/.test(value) )) throw httpError("آدرس فایل یا تصویر نامعتبر است");
+  }
+}
+
 async function createDownload(payload) {
-  if (!payload.name || !payload.type || !payload.file_path) {
+  validateLinks(payload);
+  if (!String(payload.name || "").trim() || !payload.type || !String(payload.file_path || "").trim()) {
     throw httpError(
       "فیلدهای name، type و file_path الزامی هستند",
       400,
@@ -77,30 +96,25 @@ async function createDownload(payload) {
   }
   if (!DOWNLOAD_TYPES.includes(payload.type)) {
     throw httpError(
-      "type باید یکی از layer، pdf، map، other باشد",
+      "دسته‌بندی فایل نامعتبر است",
       400,
       "INVALID_TYPE"
     );
   }
 
+  validateMetadata(payload);
   const result = await query(
-    `INSERT INTO downloads
-       (name, description, type, file_path, format, is_protected)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING ${DOWNLOAD_COLUMNS}`,
-    [
-      String(payload.name).trim(),
-      payload.description || null,
-      payload.type,
-      String(payload.file_path).trim(),
-      payload.format || null,
-      payload.is_protected !== undefined ? Boolean(payload.is_protected) : false,
-    ]
+    `INSERT INTO downloads (name,description,type,file_path,format,is_protected,is_active,requires_login,archive_password,preview_path,size_bytes,dimensions,software,usage_guide,usage_terms)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING ${DOWNLOAD_COLUMNS}`,
+    [String(payload.name).trim(), payload.description || null, payload.type, String(payload.file_path).trim(), payload.format || null,
+     Boolean(payload.is_protected), payload.is_active !== false, payload.requires_login === true,
+     String(payload.archive_password || "").trim() || null, String(payload.preview_path || "").trim() || null, payload.size_bytes ?? null, ...["dimensions", "software", "usage_guide", "usage_terms"].map(key => String(payload[key] || "").trim() || null)]
   );
   return result.rows[0];
 }
 
 async function updateDownload(id, payload) {
+  validateLinks(payload); validateMetadata(payload);
   const current = await findById(id);
   if (!current) {
     throw httpError("دانلود پیدا نشد", 404, "NOT_FOUND");
@@ -108,7 +122,7 @@ async function updateDownload(id, payload) {
 
   if (payload.type !== undefined && !DOWNLOAD_TYPES.includes(payload.type)) {
     throw httpError(
-      "type باید یکی از layer، pdf، map، other باشد",
+      "دسته‌بندی فایل نامعتبر است",
       400,
       "INVALID_TYPE"
     );
@@ -119,7 +133,7 @@ async function updateDownload(id, payload) {
   let i = 1;
 
   if (payload.name !== undefined) {
-    if (!payload.name) {
+    if (!String(payload.name || "").trim()) {
       throw httpError("name نمی‌تواند خالی باشد", 400, "VALIDATION_ERROR");
     }
     fields.push(`name = $${i++}`);
@@ -134,7 +148,7 @@ async function updateDownload(id, payload) {
     values.push(payload.type);
   }
   if (payload.file_path !== undefined) {
-    if (!payload.file_path) {
+    if (!String(payload.file_path || "").trim()) {
       throw httpError("file_path نمی‌تواند خالی باشد", 400, "VALIDATION_ERROR");
     }
     fields.push(`file_path = $${i++}`);
@@ -149,13 +163,24 @@ async function updateDownload(id, payload) {
     values.push(Boolean(payload.is_protected));
   }
 
+  for (const key of ["is_active", "requires_login", "archive_password", "preview_path", "size_bytes", "dimensions", "software", "usage_guide", "usage_terms"]) {
+    if (payload[key] === undefined) continue;
+    let value = payload[key];
+    if (["is_active", "requires_login"].includes(key)) {
+      if (typeof value !== "boolean") throw httpError("وضعیت نامعتبر است");
+    } else if (key === "size_bytes") {
+      if (value !== null && (!Number.isSafeInteger(Number(value)) || Number(value) < 0)) throw httpError("حجم نامعتبر است");
+      value = value === null ? null : Number(value);
+    } else value = String(value || "").trim() || null;
+    fields.push(`${key} = $${i++}`); values.push(value);
+  }
   if (fields.length === 0) {
     throw httpError("هیچ فیلدی برای بروزرسانی ارسال نشده", 400, "NO_FIELDS");
   }
 
   values.push(id);
   const result = await query(
-    `UPDATE downloads SET ${fields.join(", ")}
+    `UPDATE downloads SET updated_at = NOW(), ${fields.join(", ")}
      WHERE id = $${i}
      RETURNING ${DOWNLOAD_COLUMNS}`,
     values

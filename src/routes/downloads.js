@@ -27,13 +27,14 @@ router.get("/", optionalAuth, async (req, res) => {
   try {
     const downloads = await downloadsService.listDownloads({
       type: req.query.type || null,
+      includeInactive: req.user?.role === "admin",
     });
 
     const isLoggedIn = Boolean(req.user);
     res.json({
       downloads: downloads.map((row) =>
         downloadsService.toPublicDownload(row, {
-          hideFilePath: row.is_protected && !isLoggedIn,
+          hideFilePath: row.requires_login && !isLoggedIn,
         })
       ),
     });
@@ -52,7 +53,8 @@ router.get("/:id", optionalAuth, async (req, res) => {
       return res.status(404).json({ message: "دانلود پیدا نشد", code: "NOT_FOUND" });
     }
 
-    if (download.is_protected && !req.user) {
+    if (!download.is_active && req.user?.role !== "admin") return res.status(404).json({ message: "فایل در دسترس نیست" });
+    if (download.requires_login && !req.user) {
       return res.status(401).json({
         message: "برای دسترسی به این فایل باید وارد شوید",
         code: "UNAUTHORIZED",
@@ -66,6 +68,16 @@ router.get("/:id", optionalAuth, async (req, res) => {
       code: err.code,
     });
   }
+});
+
+router.post("/:id/access", optionalAuth, async (req, res) => {
+  try {
+    const item = await downloadsService.findById(req.params.id);
+    if (!item || !item.is_active) return res.status(404).json({message:"فایل در دسترس نیست"});
+    if (item.requires_login && !req.user) return res.status(401).json({message:"برای دانلود وارد حساب شوید"});
+    await require("../db").query("UPDATE downloads SET download_count = download_count + 1 WHERE id=$1", [item.id]);
+    res.json({file_path: item.file_path});
+  } catch (error) { res.status(error.status || 500).json({message:"دریافت فایل ناموفق بود"}); }
 });
 
 router.post("/", authenticate, requireAdmin, async (req, res) => {

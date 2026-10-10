@@ -161,6 +161,7 @@ async function startServer() {
   const { ensureDesignBannerTextColumn } = require("./migrations/ensure-design-banner-text");
   await ensureDesignBannerTextColumn();
   await require("./migrations/ensure-design-updated-at").ensureDesignUpdatedAtColumn();
+  await require("./migrations/ensure-download-management").ensureDownloadManagement();
   app.listen(PORT, async () => {
   console.log(`Server listening on http://localhost:${PORT}`);
   console.log(`Swagger UI: http://localhost:${PORT}/api-docs`);

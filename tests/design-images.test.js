@@ -13,9 +13,9 @@ require.cache[dbPath] = {
       calls.push({ sql, values });
       if (sql.startsWith("SELECT")) return { rows: [current] };
       if (sql.startsWith("INSERT")) {
-        current = { id: "product-1", image_path: values[4], image_paths: values[7] };
+        current = { id: "product-1", image_path: values[4], image_paths: values[7], banner_text: values[8] };
       } else if (sql.startsWith("UPDATE")) {
-        for (const match of sql.matchAll(/(image_path|image_paths) = \$(\d+)/g)) {
+        for (const match of sql.matchAll(/(image_path|image_paths|banner_text) = \$(\d+)/g)) {
           current[match[1]] = values[Number(match[2]) - 1];
         }
       }
@@ -28,6 +28,21 @@ const { createDesign, updateDesign, findById } = require("../src/services/design
 const payload = { code: "D-065", type: "taslit", title: "محصول", price: 950000, image_path: "/one.jpg" };
 
 test("design image persistence and validation", async (t) => {
+  await t.test("creates, reloads, updates and clears a product's banner template", async () => {
+    const banner_text = "{مخاطب} گرامی\nدرگذشت {نام متوفی}\nاز طرف: {از طرف}";
+    await createDesign({ ...payload, banner_text });
+    assert.equal((await findById("product-1")).banner_text, banner_text);
+    await updateDesign("product-1", { title: "new title" });
+    assert.equal(current.banner_text, banner_text);
+    await updateDesign("product-1", { banner_text: "متن جدید" });
+    assert.equal(current.banner_text, "متن جدید");
+    await updateDesign("product-1", { banner_text: "" });
+    assert.equal(current.banner_text, "");
+    for (const invalid of [null, {}, "x".repeat(5001)]) {
+      await assert.rejects(createDesign({ ...payload, banner_text: invalid }), { code: "VALIDATION_ERROR" });
+      await assert.rejects(updateDesign("product-1", { banner_text: invalid }), { code: "VALIDATION_ERROR" });
+    }
+  });
   await t.test("stores and retrieves three images with a compatible primary image", async () => {
     const images = ["/one.jpg", "/two.png", "/three.webp"];
     await createDesign({ ...payload, image_paths: images });

@@ -114,6 +114,7 @@ const options = {
             title: { type: "string", example: "طرح کربلا 1" },
             image_path: { type: "string", example: "/uploads/designs/karbala-1.jpg" },
             image_paths: { type: "array", maxItems: 3, items: { type: "string" }, description: "Product images, primary image first" },
+            banner_text: { type: "string", maxLength: 5000, description: "Banner template with {مخاطب}, {نام متوفی}, {از طرف} placeholders" },
             price: { type: "integer", example: 250000 },
             is_active: { type: "boolean", example: true },
             created_at: { type: "string", format: "date-time" },

@@ -13,7 +13,15 @@ const DESIGN_TYPES = [
 ];
 
 const DESIGN_COLUMNS =
-  "id, code, type, category, title, image_path, image_paths, price, is_active, created_at";
+  "id, code, type, category, title, image_path, image_paths, banner_text, price, is_active, created_at";
+
+function bannerText(value) {
+  if (value === undefined) return "";
+  if (typeof value !== "string" || value.length > 5000) {
+    throw httpError("متن بنر باید متن و حداکثر ۵۰۰۰ کاراکتر باشد", 400, "VALIDATION_ERROR");
+  }
+  return value.trim();
+}
 
 function designImagePaths(primary, paths) {
   if (paths !== undefined && (!Array.isArray(paths) || paths.some((path) => typeof path !== "string" || !path.trim()))) {
@@ -139,8 +147,8 @@ async function createDesign(payload) {
     const images = designImagePaths(payload.image_path, payload.image_paths);
     const result = await query(
       `INSERT INTO designs
-         (code, type, category, title, image_path, price, is_active, image_paths)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         (code, type, category, title, image_path, price, is_active, image_paths, banner_text)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING ${DESIGN_COLUMNS}`,
       [
         String(payload.code).trim(),
@@ -151,6 +159,7 @@ async function createDesign(payload) {
         price,
         payload.is_active !== undefined ? Boolean(payload.is_active) : true,
         images,
+        bannerText(payload.banner_text),
       ]
     );
     return result.rows[0];
@@ -224,6 +233,10 @@ async function updateDesign(id, payload) {
     }
     fields.push(`price = $${i++}`);
     values.push(price);
+  }
+  if (payload.banner_text !== undefined) {
+    fields.push(`banner_text = $${i++}`);
+    values.push(bannerText(payload.banner_text));
   }
   if (payload.is_active !== undefined) {
     fields.push(`is_active = $${i++}`);

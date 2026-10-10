@@ -158,6 +158,8 @@ app.get("/tables", async (_req, res) => {
 async function startServer() {
   const { ensureDesignImagesColumn } = require("./migrations/ensure-design-images");
   await ensureDesignImagesColumn();
+  const { ensureDesignBannerTextColumn } = require("./migrations/ensure-design-banner-text");
+  await ensureDesignBannerTextColumn();
   app.listen(PORT, async () => {
   console.log(`Server listening on http://localhost:${PORT}`);
   console.log(`Swagger UI: http://localhost:${PORT}/api-docs`);

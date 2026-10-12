@@ -251,6 +251,7 @@ async function resolveDesignId(client, item) {
     [code, type]
   );
   if (existing.rows[0]) return existing.rows[0].id;
+  if (type === "occasion") throw httpError("محصول مناسبتی پیدا نشد", 404, "NOT_FOUND");
 
   try {
     const created = await client.query(
@@ -281,7 +282,17 @@ async function insertItems(client, orderId, items) {
       throw httpError("unit_price برای آیتم الزامی است", 400, "VALIDATION_ERROR");
     }
     const quantity = Number(item.quantity ?? 1);
-    const unitPrice = Number(item.unit_price);
+    let unitPrice = Number(item.unit_price);
+    let customData = item.custom_data || {};
+    const designResult = await client.query("SELECT type, price, is_active, product_options FROM designs WHERE id = $1", [designId]);
+    const design = designResult.rows[0];
+    if (design?.type === "occasion") {
+      if (!design.is_active) throw httpError("این محصول غیرفعال است", 400, "VALIDATION_ERROR");
+      const quote = require("./product-options").quoteProduct(design, customData.productSelection);
+      if (unitPrice !== quote.price) throw httpError("قیمت محصول تغییر کرده است؛ محصول را دوباره به سبد اضافه کنید", 409, "PRICE_CHANGED");
+      unitPrice = quote.price;
+      customData = { ...customData, design_type: "occasion", type: "occasion-banner", productSelection: quote.selection };
+    }
     if (!Number.isInteger(quantity) || quantity <= 0) {
       throw httpError("quantity باید عدد صحیح بزرگ‌تر از صفر باشد", 400, "VALIDATION_ERROR");
     }
@@ -299,7 +310,7 @@ async function insertItems(client, orderId, items) {
         designId,
         quantity,
         unitPrice,
-        JSON.stringify(item.custom_data || {}),
+        JSON.stringify(customData),
         item.item_note || null,
       ]
     );
@@ -359,6 +370,9 @@ async function createOrder(payload, currentUser) {
     const order = orderResult.rows[0];
     const insertedItems =
       items.length > 0 ? await insertItems(client, order.id, items) : [];
+    if (insertedItems.some(item => item.custom_data?.design_type === "occasion") && totalPrice < calcTotalFromItems(insertedItems)) {
+      throw httpError("مبلغ سفارش کمتر از جمع قیمت محصولات است", 400, "VALIDATION_ERROR");
+    }
 
     await client.query("COMMIT");
     return { ...order, items: insertedItems };

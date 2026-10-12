@@ -1,4 +1,5 @@
 const { query } = require("../db");
+const { normalizeProductOptions } = require("./product-options");
 
 const DESIGN_TYPES = [
   "taslit",
@@ -13,7 +14,7 @@ const DESIGN_TYPES = [
 ];
 
 const DESIGN_COLUMNS =
-  "id, code, type, category, title, image_path, image_paths, banner_text, price, is_active, created_at, updated_at";
+  "id, code, type, category, title, image_path, image_paths, banner_text, product_options, price, is_active, created_at, updated_at";
 
 function bannerText(value) {
   if (value === undefined) return "";
@@ -151,8 +152,8 @@ async function createDesign(payload) {
     const images = designImagePaths(payload.image_path, payload.image_paths);
     const result = await query(
       `INSERT INTO designs
-         (code, type, category, title, image_path, price, is_active, image_paths, banner_text)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         (code, type, category, title, image_path, price, is_active, image_paths, banner_text, product_options)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
        RETURNING ${DESIGN_COLUMNS}`,
       [
         String(payload.code).trim(),
@@ -164,6 +165,7 @@ async function createDesign(payload) {
         payload.is_active !== undefined ? Boolean(payload.is_active) : true,
         images,
         bannerText(payload.banner_text),
+        JSON.stringify(normalizeProductOptions(payload.product_options)),
       ]
     );
     return result.rows[0];
@@ -192,6 +194,11 @@ async function updateDesign(id, payload) {
   const fields = [];
   const values = [];
   let i = 1;
+
+  if (payload.product_options !== undefined) {
+    fields.push(`product_options = $${i++}::jsonb`);
+    values.push(JSON.stringify(normalizeProductOptions(payload.product_options)));
+  }
 
   if (payload.code !== undefined) {
     if (!payload.code) {
@@ -286,6 +293,10 @@ async function deleteDesign(id) {
 async function updatePriceByType(type, price) {
   if (!DESIGN_TYPES.includes(type)) {
     throw invalidTypeError(type);
+  }
+  if (type === "occasion") {
+    const configured = await query("SELECT 1 FROM designs WHERE type = $1 AND jsonb_array_length(product_options->'variants') > 0 LIMIT 1", [type]);
+    if (configured.rows.length) throw httpError("برای محصولات مناسبتی دارای چند نوع، قیمت هر نوع را در ویرایش محصول تغییر دهید", 400, "VARIANT_PRICES_REQUIRED");
   }
 
   const newPrice = Number(price);

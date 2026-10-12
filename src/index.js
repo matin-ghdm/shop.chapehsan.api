@@ -26,6 +26,7 @@ app.use("/addresses", addressesRouter);
 app.use("/slides", slidesRouter);
 app.use("/downloads", require("./routes/downloads"));
 app.use("/designs", require("./routes/designs"));
+app.use("/occasion-calendar", require("./routes/occasion-calendar"));
 app.use("/favorites", require("./routes/favorites"));
 app.use("/admin", require("./routes/admin"));
 app.use("/reviews", require("./routes/reviews"));
@@ -160,6 +161,8 @@ async function startServer() {
   await ensureDesignImagesColumn();
   const { ensureDesignBannerTextColumn } = require("./migrations/ensure-design-banner-text");
   await ensureDesignBannerTextColumn();
+  await require("./migrations/ensure-product-options").ensureProductOptions();
+  await require("./migrations/ensure-occasion-calendar").ensureOccasionCalendar();
   await require("./migrations/ensure-design-updated-at").ensureDesignUpdatedAtColumn();
   await require("./migrations/ensure-download-management").ensureDownloadManagement();
   app.listen(PORT, async () => {

@@ -24,4 +24,10 @@ router.put('/:id',authenticate,admin,wrap(async(req,res)=>{
  if(!result.rows[0])return res.status(404).json({message:'مناسبت پیدا نشد'});
  res.json({event:result.rows[0]});
 }));
+router.delete('/:id',authenticate,admin,wrap(async(req,res)=>{
+ if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.params.id))return res.status(400).json({message:'شناسه معتبر نیست'});
+ const result=await query('DELETE FROM occasion_calendar WHERE id=$1 RETURNING id',[req.params.id]);
+ if(!result.rows[0])return res.status(404).json({message:'مناسبت پیدا نشد'});
+ res.json({deleted:true,id:result.rows[0].id});
+}));
 module.exports=router;

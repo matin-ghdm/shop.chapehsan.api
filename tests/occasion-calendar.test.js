@@ -29,6 +29,7 @@ test('calendar routes restrict management, persist edits and expose only schedul
  require.cache[dbPath]={id:dbPath,filename:dbPath,loaded:true,exports:{query:async(sql,values)=>{
   if(sql.startsWith('INSERT')){const keys=sql.match(/\(([^)]+)\)/)[1].split(',');const row={id:'00000000-0000-4000-8000-000000000001',updated_at:new Date().toISOString()};keys.forEach((k,i)=>row[k]=values[i]);rows.push(row);return {rows:[row]};}
   if(sql.startsWith('UPDATE')){const row=rows.find(r=>r.id===values.at(-1));if(!row)return {rows:[]};for(const m of sql.matchAll(/(\w+)=\$(\d+)/g))row[m[1]]=values[Number(m[2])-1];return {rows:[row]};}
+  if(sql.startsWith('DELETE')){const removed=rows.find(r=>r.id===values[0]);rows=rows.filter(r=>r.id!==values[0]);return {rows:removed?[{id:removed.id}]:[]};}
   return {rows:rows.filter(r=>!sql.includes('WHERE is_active=TRUE')||r.is_active)};
  }}};
  const authPath=require.resolve('../src/middleware/auth');require.cache[authPath]={id:authPath,filename:authPath,loaded:true,exports:{authenticate:(req,res,next)=>{if(!req.headers.authorization)return res.sendStatus(401);req.user={role:req.headers.authorization==='Bearer admin'?'admin':'user'};next();}}};
@@ -46,5 +47,15 @@ test('calendar routes restrict management, persist edits and expose only schedul
   const adminList=(await (await fetch(base+'/admin/all',{headers})).json()).events;assert.equal(adminList[0].message,'ویرایش ذخیره شد');assert.equal(adminList[0].status,'inactive');
   assert.equal((await (await fetch(base)).json()).events.length,0);
   rows=[{...saved,is_active:true,event_date:'2099-01-01'}];assert.equal((await (await fetch(base)).json()).events.length,0);
+  assert.equal((await fetch(base+'/'+saved.id,{method:'DELETE'})).status,401);
+  assert.equal((await fetch(base+'/'+saved.id,{method:'DELETE',headers:{Authorization:'Bearer user'}})).status,403);
+  assert.equal(rows.length,1);
+  assert.equal((await fetch(base+'/invalid',{method:'DELETE',headers})).status,400);
+  rows[0].event_date=payload.event_date;
+  assert.equal((await (await fetch(base)).json()).events.length,1);
+  const deleted=await fetch(base+'/'+saved.id,{method:'DELETE',headers});assert.equal(deleted.status,200);assert.deepEqual(await deleted.json(),{deleted:true,id:saved.id});
+  assert.equal((await (await fetch(base+'/admin/all',{headers})).json()).events.length,0);
+  assert.equal((await (await fetch(base)).json()).events.length,0);
+  assert.equal((await fetch(base+'/'+saved.id,{method:'DELETE',headers})).status,404);
  }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 });

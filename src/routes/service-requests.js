@@ -1,6 +1,7 @@
 const express = require("express");
 const { query } = require("../db");
 const { notifyServiceRequest } = require("../services/telegram-bot");
+const { parseRequestAttachments } = require("../lib/request-attachments");
 
 const router = express.Router();
 const clean = (value, max = 1000) => String(value ?? "").trim().slice(0, max);
@@ -16,18 +17,19 @@ router.post("/", async (req, res) => {
   const itemDescription = clean(body.item_description, 1200);
   const quantity = Number(body.quantity || 1);
   const details = clean(body.details, 3000);
+  const attachments = parseRequestAttachments(body.attachments);
 
-  if (!serviceSlug || !serviceLabel || customerName.length < 2 || !/^\+?\d{10,15}$/.test(phone) || itemDescription.length < 3 || !Number.isInteger(quantity) || quantity < 1 || quantity > 100000) {
+  if (!serviceSlug || !serviceLabel || customerName.length < 2 || !/^\+?\d{10,15}$/.test(phone) || itemDescription.length < 3 || !Number.isInteger(quantity) || quantity < 1 || quantity > 100000 || attachments === null) {
     return res.status(400).json({ message: "لطفاً اطلاعات ضروری درخواست را کامل و درست وارد کنید", code: "VALIDATION_ERROR" });
   }
 
   try {
     const inserted = await query(
-      `INSERT INTO service_requests (service_slug, service_label, customer_name, phone, item_description, quantity, details)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, created_at`,
-      [serviceSlug, serviceLabel, customerName, phone, itemDescription, quantity, details || null],
+      `INSERT INTO service_requests (service_slug, service_label, customer_name, phone, item_description, quantity, details, attachments)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING id, created_at`,
+      [serviceSlug, serviceLabel, customerName, phone, itemDescription, quantity, details || null, JSON.stringify(attachments)],
     );
-    const request = { id: inserted.rows[0].id, service_label: serviceLabel, customer_name: customerName, phone, item_description: itemDescription, quantity, details };
+    const request = { id: inserted.rows[0].id, service_label: serviceLabel, customer_name: customerName, phone, item_description: itemDescription, quantity, details, attachments };
     await notifyServiceRequest(request);
     return res.status(201).json({ request: inserted.rows[0], message: "درخواست شما ثبت شد" });
   } catch (error) {

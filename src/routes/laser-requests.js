@@ -1,6 +1,7 @@
 const express = require("express");
 const { query } = require("../db");
 const { notifyLaserRequest } = require("../services/telegram-bot");
+const { parseRequestAttachments } = require("../lib/request-attachments");
 
 const router = express.Router();
 const VALID_SERVICES = new Set(["fiber", "co2"]);
@@ -25,18 +26,19 @@ router.post("/", async (req, res) => {
   const materialProvidedBy = clean(body.material_provided_by, 20);
   const neededBy = clean(body.needed_by, 40);
   const artworkNote = clean(body.artwork_note, 1500);
+  const attachments = parseRequestAttachments(body.attachments);
 
-  if (!VALID_SERVICES.has(service) || customerName.length < 2 || !/^\+?\d{10,15}$/.test(phone) || !material || itemDescription.length < 4 || !Number.isInteger(quantity) || quantity < 1 || quantity > 100000 || !VALID_MATERIAL_OWNERS.has(materialProvidedBy)) {
+  if (!VALID_SERVICES.has(service) || customerName.length < 2 || !/^\+?\d{10,15}$/.test(phone) || !material || itemDescription.length < 4 || !Number.isInteger(quantity) || quantity < 1 || quantity > 100000 || !VALID_MATERIAL_OWNERS.has(materialProvidedBy) || attachments === null) {
     return res.status(400).json({ message: "لطفاً اطلاعات ضروری سفارش را کامل و درست وارد کنید", code: "VALIDATION_ERROR" });
   }
 
   try {
     const inserted = await query(
       `INSERT INTO laser_requests
-        (service, customer_name, phone, material, item_description, quantity, dimensions, material_provided_by, needed_by, artwork_note)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        (service, customer_name, phone, material, item_description, quantity, dimensions, material_provided_by, needed_by, artwork_note, attachments)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
        RETURNING id, created_at`,
-      [service, customerName, phone, material, itemDescription, quantity, dimensions || null, materialProvidedBy, neededBy || null, artworkNote || null],
+      [service, customerName, phone, material, itemDescription, quantity, dimensions || null, materialProvidedBy, neededBy || null, artworkNote || null, JSON.stringify(attachments)],
     );
     const request = {
       id: inserted.rows[0].id,
@@ -50,6 +52,7 @@ router.post("/", async (req, res) => {
       material_provided_by: materialProvidedBy,
       needed_by: neededBy,
       artwork_note: artworkNote,
+      attachments,
     };
     await notifyLaserRequest(request);
     return res.status(201).json({ request: inserted.rows[0], message: "درخواست سفارش ثبت شد" });

@@ -19,6 +19,7 @@ async function ensureLaserRequests() {
     )
   `);
   await query(`CREATE INDEX IF NOT EXISTS laser_requests_created_idx ON laser_requests (created_at DESC)`);
+  await query(`ALTER TABLE laser_requests ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'::jsonb`);
 }
 
 module.exports = { ensureLaserRequests };

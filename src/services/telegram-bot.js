@@ -107,6 +107,7 @@ async function notifyLaserRequest(request) {
     `تأمین متریال: ${{ customer: "مشتری", business: "چاپ احسان", unsure: "نیازمند مشاوره" }[request.material_provided_by] || "نامشخص"}`,
     `زمان موردنیاز: ${request.needed_by || "اعلام نشده"}`,
     `فایل و توضیحات طرح: ${request.artwork_note || "اعلام نشده"}`,
+    ...(request.attachments || []).map((file) => `فایل پیوست: ${file.name} — ${file.url}`),
   ].join("\n");
   for (const adminId of admins) {
     try {
@@ -130,7 +131,8 @@ async function notifyServiceRequest(request) {
     `تماس: ${request.phone}`,
     `شرح درخواست: ${request.item_description}`,
     `تعداد: ${request.quantity}`,
-    `توضیحات تکمیلی: ${request.details || "اعلام نشده"}`,
+    `توضیحات تکمیلی: ${(request.details || "اعلام نشده").slice(0, 800)}`,
+    ...(request.attachments || []).map((file) => `فایل پیوست: ${file.name} — ${file.url}`),
   ].join("\n");
   for (const adminId of admins) {
     try { await sendMessage(adminId, text); }

@@ -12,7 +12,7 @@ const ORDER_STATUSES = [
 ];
 
 const ORDER_COLUMNS =
-  "id, user_id, address_id, is_pickup, status, total_price, note, created_at, payment_track_id, payment_ref_number, payment_card_number, paid_at";
+  "id, user_id, address_id, is_pickup, status, total_price, subtotal_price, discount_code, discount_amount, shipping_fee, note, created_at, payment_track_id, payment_ref_number, payment_card_number, paid_at";
 
 function httpError(message, status = 400, code = "BAD_REQUEST") {
   const error = new Error(message);
@@ -358,6 +358,11 @@ async function createOrder(payload, currentUser) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const couponCode = String(payload.discount_code || "").trim();
+    const shippingFee = Number(payload.shipping_fee ?? 0);
+    if (couponCode && (!Number.isSafeInteger(shippingFee) || shippingFee < 0 || shippingFee > 1000000000)) {
+      throw httpError("هزینه ارسال معتبر نیست", 400, "VALIDATION_ERROR");
+    }
 
     const orderResult = await client.query(
       `INSERT INTO orders
@@ -370,12 +375,24 @@ async function createOrder(payload, currentUser) {
     const order = orderResult.rows[0];
     const insertedItems =
       items.length > 0 ? await insertItems(client, order.id, items) : [];
-    if (insertedItems.some(item => item.custom_data?.design_type === "occasion") && totalPrice < calcTotalFromItems(insertedItems)) {
+    let finalOrder = order;
+    if (couponCode) {
+      const subtotal = calcTotalFromItems(insertedItems);
+      if (!Number.isSafeInteger(subtotal) || subtotal < 1) throw httpError("جمع محصولات برای تخفیف معتبر نیست", 400, "VALIDATION_ERROR");
+      const discount = await require("./discount-codes").calculateDiscount(couponCode, subtotal, client);
+      const finalTotal = subtotal - discount.discount_amount + shippingFee;
+      const updated = await client.query(
+        `UPDATE orders SET total_price=$1, subtotal_price=$2, discount_code=$3, discount_amount=$4, shipping_fee=$5 WHERE id=$6 RETURNING ${ORDER_COLUMNS}`,
+        [finalTotal, subtotal, discount.code, discount.discount_amount, shippingFee, order.id]
+      );
+      finalOrder = updated.rows[0];
+    }
+    if (!couponCode && insertedItems.some(item => item.custom_data?.design_type === "occasion") && totalPrice < calcTotalFromItems(insertedItems)) {
       throw httpError("مبلغ سفارش کمتر از جمع قیمت محصولات است", 400, "VALIDATION_ERROR");
     }
 
     await client.query("COMMIT");
-    return { ...order, items: insertedItems };
+    return { ...finalOrder, items: insertedItems };
   } catch (err) {
     await client.query("ROLLBACK");
     if (err.status) throw err;

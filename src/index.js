@@ -31,6 +31,7 @@ app.use("/favorites", require("./routes/favorites"));
 app.use("/admin", require("./routes/admin"));
 app.use("/reviews", require("./routes/reviews"));
 app.use("/payments", require("./routes/payments"));
+app.use("/discount-codes", require("./routes/discount-codes"));
 
 /**
  * @openapi
@@ -165,6 +166,7 @@ async function startServer() {
   await require("./migrations/ensure-occasion-calendar").ensureOccasionCalendar();
   await require("./migrations/ensure-design-updated-at").ensureDesignUpdatedAtColumn();
   await require("./migrations/ensure-download-management").ensureDownloadManagement();
+  await require("./migrations/ensure-discount-codes").ensureDiscountCodes();
   app.listen(PORT, async () => {
   console.log(`Server listening on http://localhost:${PORT}`);
   console.log(`Swagger UI: http://localhost:${PORT}/api-docs`);

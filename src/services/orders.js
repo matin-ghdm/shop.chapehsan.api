@@ -404,7 +404,7 @@ async function createOrder(payload, currentUser) {
     const walletUpdated = await client.query(
       `UPDATE orders
        SET total_price = $1, wallet_amount = $2, amount_before_wallet = $3,
-           status = $4, paid_at = CASE WHEN $4 = 'paid' THEN NOW() ELSE paid_at END
+           status = $4, paid_at = CASE WHEN $1 = 0 THEN NOW() ELSE paid_at END
        WHERE id = $5 RETURNING ${ORDER_COLUMNS}`,
       [amountDue, walletAmount, amountBeforeWallet, paymentStatus, order.id],
     );

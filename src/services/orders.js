@@ -293,6 +293,17 @@ async function insertItems(client, orderId, items) {
       unitPrice = quote.price;
       customData = { ...customData, design_type: "occasion", type: "occasion-banner", productSelection: quote.selection };
     }
+    if (design?.type === "laser") {
+      if (!design.is_active) throw httpError("این محصول غیرفعال است", 400, "VALIDATION_ERROR");
+      if (!Number.isInteger(Number(design.price)) || Number(design.price) <= 0) {
+        throw httpError("این محصول قیمت فروش ندارد", 400, "VALIDATION_ERROR");
+      }
+      if (unitPrice !== Number(design.price)) {
+        throw httpError("قیمت محصول تغییر کرده است؛ محصول را دوباره به سبد اضافه کنید", 409, "PRICE_CHANGED");
+      }
+      unitPrice = Number(design.price);
+      customData = { ...customData, design_type: "laser", type: "laser-product" };
+    }
     if (!Number.isInteger(quantity) || quantity <= 0) {
       throw httpError("quantity باید عدد صحیح بزرگ‌تر از صفر باشد", 400, "VALIDATION_ERROR");
     }

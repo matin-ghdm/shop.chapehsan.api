@@ -33,6 +33,7 @@ app.use("/reviews", require("./routes/reviews"));
 app.use("/payments", require("./routes/payments"));
 app.use("/discount-codes", require("./routes/discount-codes"));
 app.use("/wallet", require("./routes/wallet"));
+app.use("/laser-requests", require("./routes/laser-requests"));
 
 /**
  * @openapi
@@ -169,9 +170,12 @@ async function startServer() {
   await require("./migrations/ensure-download-management").ensureDownloadManagement();
   await require("./migrations/ensure-discount-codes").ensureDiscountCodes();
   await require("./migrations/ensure-wallet").ensureWallet();
+  await require("./migrations/ensure-telegram-bot").ensureTelegramBotTables();
+  await require("./migrations/ensure-laser-requests").ensureLaserRequests();
   app.listen(PORT, async () => {
   console.log(`Server listening on http://localhost:${PORT}`);
   console.log(`Swagger UI: http://localhost:${PORT}/api-docs`);
+  require("./services/telegram-bot").startTelegramBot();
   try {
     const { ensureOrderPaymentColumns } = require("./migrations/ensure-order-payments");
     await ensureOrderPaymentColumns();

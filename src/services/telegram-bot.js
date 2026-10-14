@@ -117,6 +117,27 @@ async function notifyLaserRequest(request) {
   }
 }
 
+async function notifyServiceRequest(request) {
+  const admins = configuredAdminIds();
+  if (!admins.length) {
+    console.warn("Service request saved, but TELEGRAM_ADMIN_IDS is empty");
+    return;
+  }
+  const text = [
+    `درخواست جدید خدمات #${request.id}`,
+    `خدمت: ${request.service_label}`,
+    `نام: ${request.customer_name}`,
+    `تماس: ${request.phone}`,
+    `شرح درخواست: ${request.item_description}`,
+    `تعداد: ${request.quantity}`,
+    `توضیحات تکمیلی: ${request.details || "اعلام نشده"}`,
+  ].join("\n");
+  for (const adminId of admins) {
+    try { await sendMessage(adminId, text); }
+    catch (error) { console.error(`Service request notification failed for ${adminId}:`, error.message); }
+  }
+}
+
 async function upsertUser(message) {
   const chatId = String(message.chat.id);
   await query(
@@ -435,4 +456,4 @@ function startTelegramBot() {
   poll().catch((error) => console.error("Telegram bot failed to start:", error.message));
 }
 
-module.exports = { startTelegramBot, isBusinessHours, afterHoursMessage, notifyLaserRequest };
+module.exports = { startTelegramBot, isBusinessHours, afterHoursMessage, notifyLaserRequest, notifyServiceRequest };

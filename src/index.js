@@ -34,6 +34,7 @@ app.use("/payments", require("./routes/payments"));
 app.use("/discount-codes", require("./routes/discount-codes"));
 app.use("/wallet", require("./routes/wallet"));
 app.use("/laser-requests", require("./routes/laser-requests"));
+app.use("/service-requests", require("./routes/service-requests"));
 
 /**
  * @openapi
@@ -172,6 +173,7 @@ async function startServer() {
   await require("./migrations/ensure-wallet").ensureWallet();
   await require("./migrations/ensure-telegram-bot").ensureTelegramBotTables();
   await require("./migrations/ensure-laser-requests").ensureLaserRequests();
+  await require("./migrations/ensure-service-requests").ensureServiceRequests();
   app.listen(PORT, async () => {
   console.log(`Server listening on http://localhost:${PORT}`);
   console.log(`Swagger UI: http://localhost:${PORT}/api-docs`);

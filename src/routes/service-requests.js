@@ -2,9 +2,29 @@ const express = require("express");
 const { query } = require("../db");
 const { notifyServiceRequest } = require("../services/telegram-bot");
 const { parseRequestAttachments } = require("../lib/request-attachments");
+const { authenticate } = require("../middleware/auth");
 
 const router = express.Router();
 const clean = (value, max = 1000) => String(value ?? "").trim().slice(0, max);
+
+function requireAdmin(req, res, next) {
+  if (req.user?.role !== "admin") return res.status(403).json({ message: "دسترسی غیرمجاز" });
+  next();
+}
+
+router.get("/admin/all", authenticate, requireAdmin, async (_req, res) => {
+  try {
+    const result = await query(
+      `SELECT id, service_slug, service_label, customer_name, phone, item_description,
+              quantity, details, attachments, status, created_at
+       FROM service_requests ORDER BY created_at DESC LIMIT 300`,
+    );
+    return res.json({ requests: result.rows });
+  } catch (error) {
+    console.error("Service requests admin list failed:", error.message);
+    return res.status(500).json({ message: "دریافت درخواست‌ها ناموفق بود" });
+  }
+});
 
 router.post("/", async (req, res) => {
   const body = req.body || {};

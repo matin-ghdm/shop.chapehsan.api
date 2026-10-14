@@ -2,14 +2,35 @@ const express = require("express");
 const { query } = require("../db");
 const { notifyLaserRequest } = require("../services/telegram-bot");
 const { parseRequestAttachments } = require("../lib/request-attachments");
+const { authenticate } = require("../middleware/auth");
 
 const router = express.Router();
 const VALID_SERVICES = new Set(["fiber", "co2"]);
 const VALID_MATERIAL_OWNERS = new Set(["customer", "business", "unsure"]);
 
+function requireAdmin(req, res, next) {
+  if (req.user?.role !== "admin") return res.status(403).json({ message: "دسترسی غیرمجاز" });
+  next();
+}
+
 function clean(value, max = 1000) {
   return String(value ?? "").trim().slice(0, max);
 }
+
+router.get("/admin/all", authenticate, requireAdmin, async (_req, res) => {
+  try {
+    const result = await query(
+      `SELECT id, service, customer_name, phone, material, item_description, quantity,
+              dimensions, material_provided_by, needed_by, artwork_note, attachments,
+              status, created_at
+       FROM laser_requests ORDER BY created_at DESC LIMIT 300`,
+    );
+    return res.json({ requests: result.rows });
+  } catch (error) {
+    console.error("Laser requests admin list failed:", error.message);
+    return res.status(500).json({ message: "دریافت درخواست‌ها ناموفق بود" });
+  }
+});
 
 router.post("/", async (req, res) => {
   const body = req.body || {};

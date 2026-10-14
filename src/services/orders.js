@@ -12,7 +12,7 @@ const ORDER_STATUSES = [
 ];
 
 const ORDER_COLUMNS =
-  "id, user_id, address_id, is_pickup, status, total_price, subtotal_price, discount_code, discount_amount, shipping_fee, note, created_at, payment_track_id, payment_ref_number, payment_card_number, paid_at";
+  "id, user_id, address_id, is_pickup, status, total_price, subtotal_price, discount_code, discount_amount, shipping_fee, wallet_amount, amount_before_wallet, note, created_at, payment_track_id, payment_ref_number, payment_card_number, paid_at";
 
 function httpError(message, status = 400, code = "BAD_REQUEST") {
   const error = new Error(message);
@@ -346,11 +346,13 @@ async function createOrder(payload, currentUser) {
     totalPrice = calcTotalFromItems(items);
   }
 
-  if (totalPrice === null || Number.isNaN(totalPrice) || totalPrice < 0) {
+  if (totalPrice === null || !Number.isSafeInteger(totalPrice) || totalPrice < 0) {
     throw httpError("total_price معتبر نیست", 400, "VALIDATION_ERROR");
   }
 
-  const status = payload.status || "awaiting_payment";
+  const status = currentUser.role === "admin" && payload.status
+    ? payload.status
+    : "awaiting_payment";
   if (!ORDER_STATUSES.includes(status)) {
     throw httpError("status نامعتبر است", 400, "INVALID_STATUS");
   }
@@ -358,9 +360,10 @@ async function createOrder(payload, currentUser) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await client.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [userId]);
     const couponCode = String(payload.discount_code || "").trim();
     const shippingFee = Number(payload.shipping_fee ?? 0);
-    if (couponCode && (!Number.isSafeInteger(shippingFee) || shippingFee < 0 || shippingFee > 1000000000)) {
+    if (!Number.isSafeInteger(shippingFee) || shippingFee < 0 || shippingFee > 1000000000) {
       throw httpError("هزینه ارسال معتبر نیست", 400, "VALIDATION_ERROR");
     }
 
@@ -376,6 +379,7 @@ async function createOrder(payload, currentUser) {
     const insertedItems =
       items.length > 0 ? await insertItems(client, order.id, items) : [];
     let finalOrder = order;
+    let amountBeforeWallet = totalPrice;
     if (couponCode) {
       const subtotal = calcTotalFromItems(insertedItems);
       if (!Number.isSafeInteger(subtotal) || subtotal < 1) throw httpError("جمع محصولات برای تخفیف معتبر نیست", 400, "VALIDATION_ERROR");
@@ -386,9 +390,32 @@ async function createOrder(payload, currentUser) {
         [finalTotal, subtotal, discount.code, discount.discount_amount, shippingFee, order.id]
       );
       finalOrder = updated.rows[0];
+      amountBeforeWallet = finalTotal;
     }
-    if (!couponCode && insertedItems.some(item => item.custom_data?.design_type === "occasion") && totalPrice < calcTotalFromItems(insertedItems)) {
+    if (!couponCode && insertedItems.length > 0 && totalPrice < calcTotalFromItems(insertedItems)) {
       throw httpError("مبلغ سفارش کمتر از جمع قیمت محصولات است", 400, "VALIDATION_ERROR");
+    }
+
+    const walletService = require("./wallet");
+    const walletBalance = await walletService.getBalance(userId, client);
+    const walletAmount = Math.min(walletBalance, amountBeforeWallet);
+    const amountDue = amountBeforeWallet - walletAmount;
+    const paymentStatus = amountDue === 0 ? "paid" : finalOrder.status;
+    const walletUpdated = await client.query(
+      `UPDATE orders
+       SET total_price = $1, wallet_amount = $2, amount_before_wallet = $3,
+           status = $4, paid_at = CASE WHEN $4 = 'paid' THEN NOW() ELSE paid_at END
+       WHERE id = $5 RETURNING ${ORDER_COLUMNS}`,
+      [amountDue, walletAmount, amountBeforeWallet, paymentStatus, order.id],
+    );
+    finalOrder = walletUpdated.rows[0];
+    if (walletAmount > 0) {
+      await walletService.addTransaction(client, {
+        userId,
+        orderId: order.id,
+        type: "order_wallet_payment",
+        amount: -walletAmount,
+      });
     }
 
     await client.query("COMMIT");
@@ -412,6 +439,9 @@ async function updateOrder(id, payload) {
   const current = await findById(id);
   if (!current) {
     throw httpError("سفارش پیدا نشد", 404, "NOT_FOUND");
+  }
+  if (current.status === "canceled" && payload.status && payload.status !== "canceled") {
+    throw httpError("سفارش لغوشده قابل فعال‌سازی دوباره نیست؛ یک سفارش تازه ثبت کنید", 409, "ORDER_CANCELED");
   }
 
   const nextIsPickup =
@@ -458,6 +488,46 @@ async function updateOrder(id, payload) {
   }
 
   values.push(id);
+  if (payload.status === "canceled") {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const locked = await client.query(
+        `SELECT ${ORDER_COLUMNS} FROM orders WHERE id = $1 FOR UPDATE`,
+        [id],
+      );
+      const lockedOrder = locked.rows[0];
+      if (!lockedOrder) throw httpError("سفارش پیدا نشد", 404, "NOT_FOUND");
+      const result = await client.query(
+        `UPDATE orders SET ${fields.join(", ")} WHERE id = $${i}
+         RETURNING ${ORDER_COLUMNS}`,
+        values,
+      );
+      if (lockedOrder.status !== "canceled") {
+        await client.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [lockedOrder.user_id]);
+        const refund = Number(lockedOrder.wallet_amount || 0) +
+          (lockedOrder.paid_at ? Number(lockedOrder.total_price || 0) : 0);
+        if (refund > 0) {
+          const walletService = require("./wallet");
+          await walletService.addTransaction(client, {
+            userId: lockedOrder.user_id,
+            orderId: lockedOrder.id,
+            type: "order_cancel_refund",
+            amount: refund,
+          });
+        }
+      }
+      const items = await getItemsByOrderId(id, client);
+      await client.query("COMMIT");
+      return { ...result.rows[0], items };
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   try {
     const result = await query(
       `UPDATE orders SET ${fields.join(", ")}
@@ -476,6 +546,11 @@ async function updateOrder(id, payload) {
 }
 
 async function deleteOrder(id) {
+  const order = await findById(id);
+  if (!order) throw httpError("سفارش پیدا نشد", 404, "NOT_FOUND");
+  if (Number(order.wallet_amount || 0) > 0 || order.paid_at || order.payment_track_id) {
+    throw httpError("این سفارش سابقه مالی دارد و برای حفظ سابقه پرداخت قابل حذف نیست", 409, "ORDER_HAS_FINANCIAL_HISTORY");
+  }
   const result = await query(
     `DELETE FROM orders WHERE id = $1 RETURNING ${ORDER_COLUMNS}`,
     [id]

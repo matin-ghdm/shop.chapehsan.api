@@ -2,7 +2,7 @@ const express = require("express");
 const { authenticate } = require("../middleware/auth");
 const ordersService = require("../services/orders");
 const zibal = require("../services/zibal");
-const { query } = require("../db");
+const { pool, query } = require("../db");
 
 const router = express.Router();
 
@@ -26,6 +26,10 @@ router.post("/zibal/request", authenticate, async (req, res) => {
 
     if (order.status === "paid" || order.status === "confirmed") {
       throw httpError("این سفارش قبلاً پرداخت شده است", 400, "ALREADY_PAID");
+    }
+
+    if (Number(order.total_price) <= 0) {
+      throw httpError("این سفارش با اعتبار کیف پول تسویه شده است", 400, "NO_PAYMENT_DUE");
     }
 
     if (order.status !== "awaiting_payment" && order.status !== "pending") {
@@ -122,19 +126,56 @@ router.post("/zibal/verify", async (req, res) => {
 
     if (result === 100 || result === 201) {
       if (verify.amount != null && Number(verify.amount)!==Number(order.total_price)*10) throw httpError('مبلغ تأییدشده با سفارش مطابقت ندارد',400,'AMOUNT_MISMATCH');
-      await query(
-        `WITH paid AS (UPDATE orders
-         SET status = 'paid',
-             payment_ref_number = COALESCE($1, payment_ref_number),
-             payment_card_number = COALESCE($2, payment_card_number),
-             paid_at = COALESCE(paid_at, NOW())
-         WHERE id = $3 RETURNING id) UPDATE download_purchases SET paid_at=COALESCE(paid_at,NOW()) WHERE order_id IN (SELECT id FROM paid)`,
-        [
-          verify.refNumber ? String(verify.refNumber) : null,
-          verify.cardNumber ? String(verify.cardNumber) : null,
-          order.id,
-        ],
-      );
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const locked = await client.query(
+          "SELECT id, user_id, status FROM orders WHERE id = $1 FOR UPDATE",
+          [order.id],
+        );
+        const current = locked.rows[0];
+        if (!current) throw httpError("سفارش پیدا نشد", 404, "NOT_FOUND");
+        if (current.status === "canceled") {
+          await client.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [current.user_id]);
+          await require("../services/wallet").addTransaction(client, {
+            userId: current.user_id,
+            orderId: current.id,
+            type: "late_payment_refund",
+            amount: Number(order.total_price),
+          });
+          await client.query(
+            `UPDATE orders SET payment_ref_number = COALESCE($1, payment_ref_number),
+               payment_card_number = COALESCE($2, payment_card_number)
+             WHERE id = $3`,
+            [verify.refNumber ? String(verify.refNumber) : null,
+              verify.cardNumber ? String(verify.cardNumber) : null, order.id],
+          );
+          await client.query("COMMIT");
+          return res.json({
+            ok: true,
+            orderId: order.id,
+            message: "پرداخت سفارش لغوشده به کیف پول مشتری برگشت داده شد",
+          });
+        }
+        await client.query(
+          `WITH paid AS (UPDATE orders
+           SET status = 'paid',
+               payment_ref_number = COALESCE($1, payment_ref_number),
+               payment_card_number = COALESCE($2, payment_card_number),
+               paid_at = COALESCE(paid_at, NOW())
+           WHERE id = $3 RETURNING id)
+           UPDATE download_purchases SET paid_at=COALESCE(paid_at,NOW())
+           WHERE order_id IN (SELECT id FROM paid)`,
+          [verify.refNumber ? String(verify.refNumber) : null,
+            verify.cardNumber ? String(verify.cardNumber) : null, order.id],
+        );
+        await client.query("COMMIT");
+      } catch (err) {
+        await client.query("ROLLBACK");
+        throw err;
+      } finally {
+        client.release();
+      }
 
       return res.json({
         ok: true,

@@ -60,6 +60,9 @@ router.post("/", async (req, res) => {
 
 router.put("/:id", async (req, res) => {
   try {
+    if (req.user.role !== "admin" && (req.body?.status !== undefined || req.body?.total_price !== undefined)) {
+      return res.status(403).json({ message: "تغییر وضعیت یا مبلغ سفارش فقط برای مدیر مجاز است", code: "FORBIDDEN" });
+    }
     const existing = await ordersService.findById(req.params.id);
     ordersService.assertOrderAccess(existing, req.user);
     const order = await ordersService.updateOrder(req.params.id, req.body);
@@ -74,6 +77,9 @@ router.put("/:id", async (req, res) => {
 
 router.delete("/:id", async (req, res) => {
   try {
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ message: "حذف سفارش فقط برای مدیر مجاز است", code: "FORBIDDEN" });
+    }
     const existing = await ordersService.findById(req.params.id);
     ordersService.assertOrderAccess(existing, req.user);
     const order = await ordersService.deleteOrder(req.params.id);

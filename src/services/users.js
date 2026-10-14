@@ -149,7 +149,7 @@ async function login({ phone, password }) {
   };
 }
 
-async function updateUser(id, payload = {}) {
+async function updateUser(id, payload = {}, actor = null) {
   const current = await findById(id);
   if (!current) {
     const error = new Error("User not found");
@@ -157,7 +157,55 @@ async function updateUser(id, payload = {}) {
     throw error;
   }
 
-  const { name, lname, phone, email, password, role } = payload;
+  const { name, lname, phone, email, password, role, current_password: currentPassword } = payload;
+
+  if (actor?.id === id) {
+    if (phone !== undefined || email !== undefined) {
+      const error = new Error("تغییر شماره یا ایمیل نیازمند تأیید مالکیت حساب است");
+      error.status = 403;
+      error.code = "IDENTITY_VERIFICATION_REQUIRED";
+      throw error;
+    }
+    if (role !== undefined) {
+      const error = new Error("تغییر نقش کاربری مجاز نیست");
+      error.status = 403;
+      error.code = "FORBIDDEN";
+      throw error;
+    }
+    if (password !== undefined) {
+      if (!currentPassword) {
+        const error = new Error("برای تغییر رمز، رمز فعلی را وارد کنید");
+        error.status = 400;
+        error.code = "CURRENT_PASSWORD_REQUIRED";
+        throw error;
+      }
+      const secretResult = await query("SELECT password_hash FROM users WHERE id = $1", [id]);
+      const valid = await bcrypt.compare(String(currentPassword), secretResult.rows[0]?.password_hash || "");
+      if (!valid) {
+        const error = new Error("رمز فعلی نادرست است");
+        error.status = 401;
+        error.code = "INVALID_CURRENT_PASSWORD";
+        throw error;
+      }
+    }
+  }
+
+  if (name !== undefined && !String(name).trim()) {
+    const error = new Error("نام نمی‌تواند خالی باشد");
+    error.status = 400;
+    throw error;
+  }
+  if (lname !== undefined && !String(lname).trim()) {
+    const error = new Error("نام خانوادگی نمی‌تواند خالی باشد");
+    error.status = 400;
+    throw error;
+  }
+  if (password !== undefined && String(password).length < 6) {
+    const error = new Error("رمز عبور باید حداقل ۶ کاراکتر باشد");
+    error.status = 400;
+    error.code = "WEAK_PASSWORD";
+    throw error;
+  }
 
   if (phone && phone !== current.phone) {
     const taken = await findByPhone(phone);
@@ -174,11 +222,11 @@ async function updateUser(id, payload = {}) {
 
   if (name !== undefined) {
     fields.push(`name = $${i++}`);
-    values.push(name);
+    values.push(String(name).trim());
   }
   if (lname !== undefined) {
     fields.push(`lname = $${i++}`);
-    values.push(lname);
+    values.push(String(lname).trim());
   }
   if (phone !== undefined) {
     fields.push(`phone = $${i++}`);

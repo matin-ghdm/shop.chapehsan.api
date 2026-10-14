@@ -71,7 +71,7 @@ router.put("/:id", authenticate, async (req, res) => {
       delete payload.role;
     }
 
-    const user = await usersService.updateUser(req.params.id, payload);
+    const user = await usersService.updateUser(req.params.id, payload, req.user);
     res.json({ user });
   } catch (err) {
     res.status(err.status || 500).json({

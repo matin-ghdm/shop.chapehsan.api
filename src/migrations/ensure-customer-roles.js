@@ -17,9 +17,9 @@ async function ensureCustomerRoles() {
   `);
   await query(`
     UPDATE users
-    SET role = CASE WHEN lower(btrim(role)) = 'admin' THEN 'admin' ELSE NULL END
+    SET role = CASE WHEN lower(btrim(role::text)) = 'admin' THEN 'admin' ELSE NULL END
     WHERE role IS DISTINCT FROM CASE
-      WHEN lower(btrim(role)) = 'admin' THEN 'admin'
+      WHEN lower(btrim(role::text)) = 'admin' THEN 'admin'
       ELSE NULL
     END
   `);

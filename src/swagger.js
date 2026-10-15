@@ -115,7 +115,31 @@ const options = {
             image_path: { type: "string", example: "/uploads/designs/karbala-1.jpg" },
             image_paths: { type: "array", maxItems: 3, items: { type: "string" }, description: "Product images, primary image first" },
             banner_text: { type: "string", maxLength: 5000, description: "Banner template with {مخاطب}, {نام متوفی}, {از طرف} placeholders" },
-            product_options: { type: "object", description: "Variants with independent images, cm dimensions, toman prices, optional custom_size area rates and per-variant extras", properties: { variants: { type: "array", maxItems: 12, items: { type: "object", required: ["id", "name", "kind", "image_path", "width_cm", "height_cm", "price", "custom_size", "extras"], properties: { id: { type: "string" }, name: { type: "string" }, kind: { enum: ["wall", "stand"] }, image_path: { type: "string" }, width_cm: { type: "number", minimum: 1, maximum: 2000 }, height_cm: { type: "number", minimum: 1, maximum: 2000 }, price: { type: "integer", minimum: 1 }, custom_size: { type: "object", properties: { enabled: { type: "boolean" }, price_per_m2: { type: "integer" } } }, extras: { type: "array", maxItems: 20, items: { type: "object", properties: { id: { type: "string" }, name: { type: "string" }, price: { type: "integer", minimum: 0 } } } } } } } } },
+            product_options: {
+              type: "object",
+              description: "Customer-configurable fields and priced extras; occasion products may also define banner variants.",
+              properties: {
+                fields: {
+                  type: "array", maxItems: 20,
+                  items: { type: "object", required: ["id", "label", "kind", "required", "placeholder", "options"], properties: {
+                    id: { type: "string" }, label: { type: "string" }, kind: { enum: ["text", "number", "select", "color"] },
+                    required: { type: "boolean" }, placeholder: { type: "string" }, options: { type: "array", maxItems: 30, items: { type: "string" } },
+                  } },
+                },
+                extras: { type: "array", maxItems: 20, items: { type: "object", required: ["id", "name", "price"], properties: {
+                  id: { type: "string" }, name: { type: "string" }, price: { type: "integer", minimum: 0 },
+                } } },
+                variants: {
+                  type: "array", maxItems: 12,
+                  items: { type: "object", required: ["id", "name", "kind", "image_path", "width_cm", "height_cm", "price", "custom_size", "extras"], properties: {
+                    id: { type: "string" }, name: { type: "string" }, kind: { enum: ["wall", "stand"] }, image_path: { type: "string" },
+                    width_cm: { type: "number", minimum: 1, maximum: 2000 }, height_cm: { type: "number", minimum: 1, maximum: 2000 },
+                    price: { type: "integer", minimum: 1 }, custom_size: { type: "object", properties: { enabled: { type: "boolean" }, price_per_m2: { type: "integer" } } },
+                    extras: { type: "array", maxItems: 20, items: { type: "object", properties: { id: { type: "string" }, name: { type: "string" }, price: { type: "integer", minimum: 0 } } } },
+                  } },
+                },
+              },
+            },
             price: { type: "integer", example: 250000 },
             is_active: { type: "boolean", example: true },
             created_at: { type: "string", format: "date-time" },

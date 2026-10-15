@@ -4,7 +4,11 @@ const { authenticate } = require("../middleware/auth");
 
 const router = express.Router();
 
-router.get("/", authenticate, async (_req, res) => {
+router.get("/", authenticate, async (req, res) => {
+  if (req.user?.role !== "admin") {
+    return res.status(403).json({ message: "فقط ادمین مجاز است", code: "FORBIDDEN" });
+  }
+
   try {
     const users = await usersService.listUsers();
     res.json({ users });

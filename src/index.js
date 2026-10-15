@@ -174,6 +174,7 @@ async function startServer() {
   await require("./migrations/ensure-telegram-bot").ensureTelegramBotTables();
   await require("./migrations/ensure-laser-requests").ensureLaserRequests();
   await require("./migrations/ensure-service-requests").ensureServiceRequests();
+  await require("./migrations/ensure-customer-roles").ensureCustomerRoles();
   app.listen(PORT, async () => {
   console.log(`Server listening on http://localhost:${PORT}`);
   console.log(`Swagger UI: http://localhost:${PORT}/api-docs`);

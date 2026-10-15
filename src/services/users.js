@@ -96,8 +96,8 @@ async function register(raw = {}) {
   try {
     const passwordHash = await bcrypt.hash(password, 10);
     const result = await query(
-      `INSERT INTO users (name, lname, phone, email, password_hash)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO users (name, lname, phone, email, password_hash, role)
+       VALUES ($1, $2, $3, $4, $5, NULL)
        RETURNING ${SAFE_COLUMNS}`,
       [String(name).trim(), String(lname).trim(), phone, email, passwordHash]
     );
@@ -246,14 +246,14 @@ async function updateUser(id, payload = {}, actor = null) {
     values.push(await bcrypt.hash(password, 10));
   }
   if (role !== undefined) {
-    const normalized = String(role).trim().toLowerCase();
-    if (normalized !== "admin" && normalized !== "user") {
-      const error = new Error("نقش باید admin یا user باشد");
+    const normalized = role === null ? null : String(role).trim().toLowerCase();
+    if (normalized !== null && normalized !== "admin" && normalized !== "user") {
+      const error = new Error("نقش باید ادمین یا بدون نقش باشد");
       error.status = 400;
       throw error;
     }
     fields.push(`role = $${i++}`);
-    values.push(normalized);
+    values.push(normalized === "user" ? null : normalized);
   }
 
   if (fields.length === 0) {

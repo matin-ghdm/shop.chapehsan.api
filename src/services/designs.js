@@ -11,6 +11,7 @@ const DESIGN_TYPES = [
   "sarbarg",
   "occasion",
   "laser",
+  "decorative",
 ];
 
 const DESIGN_COLUMNS =

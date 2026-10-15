@@ -5,6 +5,7 @@ async function ensureProductOptions() {
     const quote = value => `"${value.replace(/"/g, '""')}"`;
     const { nspname, typname } = enumType.rows[0];
     await query(`ALTER TYPE ${quote(nspname)}.${quote(typname)} ADD VALUE IF NOT EXISTS 'occasion'`);
+    await query(`ALTER TYPE ${quote(nspname)}.${quote(typname)} ADD VALUE IF NOT EXISTS 'decorative'`);
   }
   await query("ALTER TABLE designs ADD COLUMN IF NOT EXISTS product_options JSONB NOT NULL DEFAULT '{\"variants\":[]}'::jsonb");
 }

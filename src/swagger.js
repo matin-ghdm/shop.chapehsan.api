@@ -107,7 +107,7 @@ const options = {
             code: { type: "string", example: "KRB-001" },
             type: {
               type: "string",
-              enum: ["taslit", "stand", "hajj", "karbala", "davati", "hamdardi", "sarbarg", "occasion", "laser"],
+              enum: ["taslit", "stand", "hajj", "karbala", "davati", "hamdardi", "sarbarg", "occasion", "laser", "decorative"],
               example: "karbala",
             },
             category: { type: "string", nullable: true, example: "کربلا" },
@@ -924,7 +924,7 @@ const options = {
               name: "type",
               schema: {
                 type: "string",
-                enum: ["taslit", "stand", "hajj", "karbala", "davati", "hamdardi", "sarbarg", "occasion", "laser"],
+                enum: ["taslit", "stand", "hajj", "karbala", "davati", "hamdardi", "sarbarg", "occasion", "laser", "decorative"],
               },
             },
             { in: "query", name: "category", schema: { type: "string" } },
@@ -963,7 +963,7 @@ const options = {
                     code: { type: "string", example: "KRB-001" },
                     type: {
                       type: "string",
-                      enum: ["taslit", "stand", "hajj", "karbala", "davati", "hamdardi", "sarbarg", "occasion", "laser"],
+                      enum: ["taslit", "stand", "hajj", "karbala", "davati", "hamdardi", "sarbarg", "occasion", "laser", "decorative"],
                     },
                     category: { type: "string" },
                     title: { type: "string" },
@@ -1004,7 +1004,7 @@ const options = {
               name: "type",
               schema: {
                 type: "string",
-                enum: ["taslit", "stand", "hajj", "karbala", "davati", "hamdardi", "sarbarg", "occasion", "laser"],
+                enum: ["taslit", "stand", "hajj", "karbala", "davati", "hamdardi", "sarbarg", "occasion", "laser", "decorative"],
               },
             },
             { in: "query", name: "category", schema: { type: "string" } },
@@ -1041,7 +1041,7 @@ const options = {
               required: true,
               schema: {
                 type: "string",
-                enum: ["taslit", "stand", "hajj", "karbala", "davati", "hamdardi", "sarbarg", "occasion", "laser"],
+                enum: ["taslit", "stand", "hajj", "karbala", "davati", "hamdardi", "sarbarg", "occasion", "laser", "decorative"],
               },
             },
           ],
@@ -1133,7 +1133,7 @@ const options = {
                     code: { type: "string" },
                     type: {
                       type: "string",
-                      enum: ["taslit", "stand", "hajj", "karbala", "davati", "hamdardi", "sarbarg", "occasion", "laser"],
+                      enum: ["taslit", "stand", "hajj", "karbala", "davati", "hamdardi", "sarbarg", "occasion", "laser", "decorative"],
                     },
                     category: { type: "string" },
                     title: { type: "string" },

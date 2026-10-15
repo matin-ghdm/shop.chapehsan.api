@@ -10,6 +10,7 @@ const PRODUCT_TYPE_LABELS = {
   karbala: "بنر کربلایی",
   occasion: "بنر مناسبتی",
   laser: "حکاکی لیزر",
+  decorative: "تابلو و محصولات دکوراتیو",
   sarbarg: "سربرگ",
 };
 const DISCOUNT_TARGET_TYPES = new Set(["all", ...Object.keys(PRODUCT_TYPE_LABELS)]);

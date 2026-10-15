@@ -80,7 +80,8 @@ const ORDER_COLUMNS_ALIASED = ORDER_COLUMNS.split(", ")
 
 const ORDER_USER_FIELDS = `
   TRIM(CONCAT(COALESCE(u.name, ''), ' ', COALESCE(u.lname, ''))) AS user_name,
-  u.phone AS user_phone`;
+  u.phone AS user_phone,
+  EXISTS (SELECT 1 FROM download_purchases dp WHERE dp.order_id = o.id) AS is_digital`;
 
 const ORDER_ADDRESS_FIELDS = `
   a.title AS address_title,

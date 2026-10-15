@@ -11,7 +11,7 @@ function requireAdmin(req, res, next) {
 
 router.post("/validate", async (req, res) => {
   try {
-    res.json(await service.calculateDiscount(req.body?.code, Number(req.body?.subtotal)));
+    res.json(await service.calculateDiscount(req.body?.code, Number(req.body?.subtotal), undefined, req.body?.items));
   } catch (err) {
     res.status(err.status || 500).json({ message: err.message || "بررسی کد تخفیف ناموفق بود", code: err.code });
   }

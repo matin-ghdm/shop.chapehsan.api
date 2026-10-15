@@ -286,6 +286,7 @@ async function insertItems(client, orderId, items) {
     let customData = item.custom_data || {};
     const designResult = await client.query("SELECT type, price, is_active, product_options FROM designs WHERE id = $1", [designId]);
     const design = designResult.rows[0];
+    if (design?.type) customData = { ...customData, design_type: design.type };
     if (design?.type === "occasion") {
       if (!design.is_active) throw httpError("این محصول غیرفعال است", 400, "VALIDATION_ERROR");
       const quote = require("./product-options").quoteProduct(design, customData.productSelection);
@@ -394,7 +395,7 @@ async function createOrder(payload, currentUser) {
     if (couponCode) {
       const subtotal = calcTotalFromItems(insertedItems);
       if (!Number.isSafeInteger(subtotal) || subtotal < 1) throw httpError("جمع محصولات برای تخفیف معتبر نیست", 400, "VALIDATION_ERROR");
-      const discount = await require("./discount-codes").calculateDiscount(couponCode, subtotal, client);
+      const discount = await require("./discount-codes").calculateDiscount(couponCode, subtotal, client, insertedItems);
       const finalTotal = subtotal - discount.discount_amount + shippingFee;
       const updated = await client.query(
         `UPDATE orders SET total_price=$1, subtotal_price=$2, discount_code=$3, discount_amount=$4, shipping_fee=$5 WHERE id=$6 RETURNING ${ORDER_COLUMNS}`,

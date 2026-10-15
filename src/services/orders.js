@@ -72,7 +72,7 @@ function validateOrderSchedule(payload, currentUser) {
   const isOpen = now.weekday !== "Fri" && now.time >= "09:00" && now.time < "19:00";
   const earliestDate = isOpen ? now.date : nextBusinessDate(now.date);
   if (deliveryDate < earliestDate) {
-    throw httpError("تاریخ ارسال باید امروز یا روز کاری بعد باشد", 400, "DELIVERY_DATE_TOO_EARLY");
+    throw httpError("تاریخ ارسال نمی‌تواند پیش از نزدیک‌ترین روز کاری باشد", 400, "DELIVERY_DATE_TOO_EARLY");
   }
   if (deliveryDate === now.date && isOpen && deliveryTime <= now.time) {
     throw httpError("ساعت ارسال باید از ساعت فعلی دیرتر باشد", 400, "DELIVERY_TIME_IN_PAST");
@@ -85,9 +85,6 @@ function validateOrderSchedule(payload, currentUser) {
         400,
         "NEXT_BUSINESS_DAY_CONFIRMATION_REQUIRED"
       );
-    }
-    if (deliveryDate !== earliestDate) {
-      throw httpError("سفارش خارج از ساعت کاری برای روز کاری بعد زمان‌بندی می‌شود", 400, "NEXT_BUSINESS_DAY_REQUIRED");
     }
   }
   return { deliveryDate, deliveryTime, confirmedNextBusinessDay };

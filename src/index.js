@@ -175,6 +175,7 @@ async function startServer() {
   await require("./migrations/ensure-laser-requests").ensureLaserRequests();
   await require("./migrations/ensure-service-requests").ensureServiceRequests();
   await require("./migrations/ensure-customer-roles").ensureCustomerRoles();
+  await require("./migrations/ensure-order-delivery-schedule").ensureOrderDeliverySchedule();
   app.listen(PORT, async () => {
   console.log(`Server listening on http://localhost:${PORT}`);
   console.log(`Swagger UI: http://localhost:${PORT}/api-docs`);

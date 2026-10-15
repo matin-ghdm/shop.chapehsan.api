@@ -12,7 +12,86 @@ const ORDER_STATUSES = [
 ];
 
 const ORDER_COLUMNS =
-  "id, user_id, address_id, is_pickup, status, total_price, subtotal_price, discount_code, discount_amount, shipping_fee, wallet_amount, amount_before_wallet, note, created_at, payment_track_id, payment_ref_number, payment_card_number, paid_at";
+  "id, user_id, address_id, is_pickup, status, total_price, subtotal_price, discount_code, discount_amount, shipping_fee, delivery_date, delivery_time, next_business_day_confirmed, wallet_amount, amount_before_wallet, note, created_at, payment_track_id, payment_ref_number, payment_card_number, paid_at";
+
+function tehranClock(now = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Tehran",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    weekday: "short",
+    hourCycle: "h23",
+  }).formatToParts(now);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return {
+    date: values.year + "-" + values.month + "-" + values.day,
+    time: values.hour + ":" + values.minute,
+    weekday: values.weekday,
+  };
+}
+
+function nextBusinessDate(date) {
+  const [year, month, day] = date.split("-").map(Number);
+  const cursor = new Date(Date.UTC(year, month - 1, day));
+  do {
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  } while (cursor.getUTCDay() === 5);
+  return cursor.getUTCFullYear() + "-" +
+    String(cursor.getUTCMonth() + 1).padStart(2, "0") + "-" +
+    String(cursor.getUTCDate()).padStart(2, "0");
+}
+
+function validateOrderSchedule(payload, currentUser) {
+  const deliveryDate = String(payload.delivery_date || "").slice(0, 10);
+  const deliveryTime = String(payload.delivery_time || "").slice(0, 5);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(deliveryDate) || !/^\d{2}:\d{2}$/.test(deliveryTime)) {
+    throw httpError("تاریخ و ساعت ارسال را انتخاب کنید", 400, "DELIVERY_SCHEDULE_REQUIRED");
+  }
+  const [year, month, day] = deliveryDate.split("-").map(Number);
+  const parsedDate = new Date(Date.UTC(year, month - 1, day));
+  if (
+    parsedDate.getUTCFullYear() !== year ||
+    parsedDate.getUTCMonth() !== month - 1 ||
+    parsedDate.getUTCDate() !== day
+  ) {
+    throw httpError("تاریخ ارسال معتبر نیست", 400, "INVALID_DELIVERY_DATE");
+  }
+  if (parsedDate.getUTCDay() === 5) {
+    throw httpError("جمعه روز کاری نیست؛ تاریخ دیگری انتخاب کنید", 400, "NON_BUSINESS_DELIVERY_DATE");
+  }
+  const [hour, minute] = deliveryTime.split(":").map(Number);
+  const deliveryMinutes = hour * 60 + minute;
+  if (!Number.isInteger(hour) || !Number.isInteger(minute) || minute > 59 ||
+      deliveryMinutes < 9 * 60 || deliveryMinutes > 20 * 60 + 30) {
+    throw httpError("ساعت ارسال باید بین ۹:۰۰ تا ۲۰:۳۰ باشد", 400, "INVALID_DELIVERY_TIME");
+  }
+  const now = tehranClock();
+  const isOpen = now.weekday !== "Fri" && now.time >= "09:00" && now.time < "19:00";
+  const earliestDate = isOpen ? now.date : nextBusinessDate(now.date);
+  if (deliveryDate < earliestDate) {
+    throw httpError("تاریخ ارسال باید امروز یا روز کاری بعد باشد", 400, "DELIVERY_DATE_TOO_EARLY");
+  }
+  if (deliveryDate === now.date && isOpen && deliveryTime <= now.time) {
+    throw httpError("ساعت ارسال باید از ساعت فعلی دیرتر باشد", 400, "DELIVERY_TIME_IN_PAST");
+  }
+  const confirmedNextBusinessDay = payload.next_business_day_confirmed === true;
+  if (!isOpen && currentUser.role !== "admin") {
+    if (!confirmedNextBusinessDay) {
+      throw httpError(
+        "ساعت ثبت سفارش سریع ۹ تا ۱۹ است. برای ثبت سفارش خارج از این ساعت، انجام آن در روز کاری بعد را تأیید کنید.",
+        400,
+        "NEXT_BUSINESS_DAY_CONFIRMATION_REQUIRED"
+      );
+    }
+    if (deliveryDate !== earliestDate) {
+      throw httpError("سفارش خارج از ساعت کاری برای روز کاری بعد زمان‌بندی می‌شود", 400, "NEXT_BUSINESS_DAY_REQUIRED");
+    }
+  }
+  return { deliveryDate, deliveryTime, confirmedNextBusinessDay };
+}
 
 function httpError(message, status = 400, code = "BAD_REQUEST") {
   const error = new Error(message);
@@ -359,6 +438,7 @@ async function createOrder(payload, currentUser) {
   const isPickup = Boolean(payload.is_pickup);
   const addressId = payload.address_id || null;
   validateAddressRule(isPickup, addressId);
+  const schedule = validateOrderSchedule(payload, currentUser);
 
   const items = Array.isArray(payload.items) ? payload.items : [];
   let totalPrice =
@@ -393,10 +473,21 @@ async function createOrder(payload, currentUser) {
 
     const orderResult = await client.query(
       `INSERT INTO orders
-         (user_id, address_id, is_pickup, status, total_price, note)
-       VALUES ($1, $2, $3, $4, $5, $6)
+         (user_id, address_id, is_pickup, status, total_price, note,
+          delivery_date, delivery_time, next_business_day_confirmed)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING ${ORDER_COLUMNS}`,
-      [userId, addressId, isPickup, status, totalPrice, payload.note || null]
+      [
+        userId,
+        addressId,
+        isPickup,
+        status,
+        totalPrice,
+        payload.note || null,
+        schedule.deliveryDate,
+        schedule.deliveryTime,
+        schedule.confirmedNextBusinessDay,
+      ]
     );
 
     const order = orderResult.rows[0];

@@ -12,7 +12,7 @@ async function authenticate(req, res, next) {
   try {
     const payload = jwt.verify(token, JWT_SECRET);
     const user = await findById(payload.id);
-    if (!user) {
+    if (!user || user.is_active === false) {
       return res.status(401).json({ message: "User not found" });
     }
     req.user = toPublicUser(user);

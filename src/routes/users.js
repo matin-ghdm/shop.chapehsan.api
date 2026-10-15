@@ -86,12 +86,24 @@ router.put("/:id", authenticate, async (req, res) => {
 
 router.delete("/:id", authenticate, async (req, res) => {
   try {
-    if (req.user.id !== req.params.id && req.user.role !== "admin") {
-      return res.status(403).json({ message: "Forbidden" });
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ message: "فقط ادمین مجاز است", code: "FORBIDDEN" });
     }
 
-    const user = await usersService.deleteUser(req.params.id);
-    res.json({ message: "User deleted", user });
+    if (req.user.id === req.params.id) {
+      return res.status(400).json({ message: "نمی‌توانید حساب مدیریتی خودتان را حذف کنید" });
+    }
+
+    const target = await usersService.findById(req.params.id);
+    if (!target || target.is_active === false) {
+      return res.status(404).json({ message: "کاربر پیدا نشد" });
+    }
+    if (String(target.role || "").trim().toLowerCase() !== "admin") {
+      return res.status(409).json({ message: "حذف مشتری از این بخش مجاز نیست", code: "CUSTOMER_DELETE_BLOCKED" });
+    }
+
+    const user = await usersService.deactivateAdminUser(req.params.id);
+    res.json({ message: "کاربر مدیریتی غیرفعال شد", user });
   } catch (err) {
     res.status(err.status || 500).json({
       message: err.message || "Delete failed",

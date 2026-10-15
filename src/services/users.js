@@ -6,7 +6,7 @@ const otpService = require("./otp");
 const JWT_SECRET = process.env.JWT_SECRET || "chapehsan-secret-change-me";
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "7d";
 
-const SAFE_COLUMNS = "id, name, lname, phone, email, role, created_at";
+const SAFE_COLUMNS = "id, name, lname, phone, email, role, created_at, is_active";
 
 function toPublicUser(row) {
   if (!row) return null;
@@ -31,7 +31,7 @@ function signToken(user) {
 
 async function findByPhone(phone) {
   const result = await query(
-    `SELECT id, name, lname, phone, email, password_hash, role, created_at
+    `SELECT id, name, lname, phone, email, password_hash, role, created_at, is_active
      FROM users WHERE phone = $1`,
     [phone]
   );
@@ -48,7 +48,7 @@ async function findById(id) {
 
 async function listUsers() {
   const result = await query(
-    `SELECT ${SAFE_COLUMNS} FROM users ORDER BY created_at DESC`
+    `SELECT ${SAFE_COLUMNS} FROM users WHERE is_active = TRUE ORDER BY created_at DESC`
   );
   return result.rows.map(toPublicUser);
 }
@@ -130,7 +130,7 @@ async function login({ phone, password }) {
   }
 
   const user = await findByPhone(phone);
-  if (!user) {
+  if (!user || user.is_active === false) {
     const error = new Error("شماره موبایل یا رمز عبور اشتباه است");
     error.status = 401;
     throw error;
@@ -273,14 +273,17 @@ async function updateUser(id, payload = {}, actor = null) {
   return toPublicUser(result.rows[0]);
 }
 
-async function deleteUser(id) {
+async function deactivateAdminUser(id) {
   const result = await query(
-    `DELETE FROM users WHERE id = $1 RETURNING ${SAFE_COLUMNS}`,
+    `UPDATE users
+     SET is_active = FALSE, role = NULL
+     WHERE id = $1 AND is_active = TRUE AND lower(btrim(role)) = 'admin'
+     RETURNING ${SAFE_COLUMNS}`,
     [id]
   );
 
   if (!result.rows[0]) {
-    const error = new Error("User not found");
+    const error = new Error("کاربر مدیریتی پیدا نشد");
     error.status = 404;
     throw error;
   }
@@ -293,7 +296,7 @@ module.exports = {
   register,
   login,
   updateUser,
-  deleteUser,
+  deactivateAdminUser,
   findById,
   listUsers,
   toPublicUser,

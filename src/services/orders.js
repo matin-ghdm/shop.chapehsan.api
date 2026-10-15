@@ -59,7 +59,7 @@ async function attachItemsToOrders(orders) {
 
 async function findById(id) {
   const result = await query(
-    `SELECT ${ORDER_COLUMNS_ALIASED}, ${ORDER_USER_FIELDS}
+    `SELECT ${ORDER_COLUMNS_ALIASED}, ${ORDER_USER_FIELDS}, ${ORDER_ADDRESS_FIELDS}
      ${ORDER_FROM_WITH_USER}
      WHERE o.id = $1`,
     [id]
@@ -82,8 +82,16 @@ const ORDER_USER_FIELDS = `
   TRIM(CONCAT(COALESCE(u.name, ''), ' ', COALESCE(u.lname, ''))) AS user_name,
   u.phone AS user_phone`;
 
+const ORDER_ADDRESS_FIELDS = `
+  a.title AS address_title,
+  a.province AS address_province,
+  a.city AS address_city,
+  a.address AS delivery_address,
+  a.postal_code AS address_postal_code,
+  a.phone AS address_phone`;
+
 const ORDER_FROM_WITH_USER =
-  "FROM orders o LEFT JOIN users u ON u.id = o.user_id";
+  "FROM orders o LEFT JOIN users u ON u.id = o.user_id LEFT JOIN addresses a ON a.id = o.address_id";
 
 function parsePickupFilter(value) {
   if (value === null || value === undefined || value === "") return null;
@@ -186,7 +194,7 @@ async function listOrders({
     const offset = (safePage - 1) * safeLimit;
 
     const result = await query(
-      `SELECT ${ORDER_COLUMNS_ALIASED}, ${ORDER_USER_FIELDS}
+      `SELECT ${ORDER_COLUMNS_ALIASED}, ${ORDER_USER_FIELDS}, ${ORDER_ADDRESS_FIELDS}
        ${ORDER_FROM_WITH_USER}
        ${where}
        ORDER BY o.created_at DESC
@@ -206,7 +214,7 @@ async function listOrders({
   }
 
   const result = await query(
-    `SELECT ${ORDER_COLUMNS_ALIASED}, ${ORDER_USER_FIELDS}
+    `SELECT ${ORDER_COLUMNS_ALIASED}, ${ORDER_USER_FIELDS}, ${ORDER_ADDRESS_FIELDS}
      ${ORDER_FROM_WITH_USER}
      ${where}
      ORDER BY o.created_at DESC`,

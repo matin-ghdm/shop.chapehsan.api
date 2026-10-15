@@ -1,6 +1,7 @@
 const express = require("express");
 const { query } = require("../db");
 const { authenticate } = require("../middleware/auth");
+const usersService = require("../services/users");
 
 const router = express.Router();
 
@@ -13,6 +14,18 @@ function requireAdmin(req, res, next) {
   }
   next();
 }
+
+router.post("/users", authenticate, requireAdmin, async (req, res) => {
+  try {
+    const user = await usersService.createAdminUser(req.body || {});
+    res.status(201).json({ user });
+  } catch (err) {
+    res.status(err.status || 500).json({
+      message: err.message || "افزودن کاربر ناموفق بود",
+      code: err.code || "CREATE_ADMIN_FAILED",
+    });
+  }
+});
 
 router.get("/metrics", authenticate, requireAdmin, async (_req, res) => {
   try {

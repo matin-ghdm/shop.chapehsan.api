@@ -53,6 +53,46 @@ async function listUsers() {
   return result.rows.map(toPublicUser);
 }
 
+async function createAdminUser(raw = {}) {
+  const name = String(raw.name ?? "").trim();
+  const lname = String(raw.lname ?? "").trim();
+  const phone = String(raw.phone ?? "").trim();
+  const email = raw.email ? String(raw.email).trim() : null;
+  const password = String(raw.password ?? "");
+
+  if (!name || !lname || !phone || !password) {
+    const error = new Error("نام، نام خانوادگی، شماره موبایل و رمز عبور الزامی است");
+    error.status = 400;
+    error.code = "VALIDATION_ERROR";
+    throw error;
+  }
+  if (password.length < 6) {
+    const error = new Error("رمز عبور باید حداقل ۶ کاراکتر باشد");
+    error.status = 400;
+    error.code = "WEAK_PASSWORD";
+    throw error;
+  }
+
+  try {
+    const passwordHash = await bcrypt.hash(password, 10);
+    const result = await query(
+      `INSERT INTO users (name, lname, phone, email, password_hash, role, is_active)
+       VALUES ($1, $2, $3, $4, $5, 'admin', TRUE)
+       RETURNING ${SAFE_COLUMNS}`,
+      [name, lname, phone, email, passwordHash]
+    );
+    return toPublicUser(result.rows[0]);
+  } catch (err) {
+    if (err.code === "23505") {
+      const error = new Error("این شماره موبایل قبلاً ثبت شده است");
+      error.status = 409;
+      error.code = "PHONE_EXISTS";
+      throw error;
+    }
+    throw err;
+  }
+}
+
 async function register(raw = {}) {
   const name = raw.name ?? raw.firstName ?? raw.first_name;
   const lname = raw.lname ?? raw.lastName ?? raw.last_name;
@@ -277,7 +317,7 @@ async function deactivateAdminUser(id) {
   const result = await query(
     `UPDATE users
      SET is_active = FALSE, role = NULL
-     WHERE id = $1 AND is_active = TRUE AND lower(btrim(role)) = 'admin'
+     WHERE id = $1 AND is_active = TRUE AND lower(btrim(role::text)) = 'admin'
      RETURNING ${SAFE_COLUMNS}`,
     [id]
   );
@@ -294,6 +334,7 @@ async function deactivateAdminUser(id) {
 module.exports = {
   JWT_SECRET,
   register,
+  createAdminUser,
   login,
   updateUser,
   deactivateAdminUser,

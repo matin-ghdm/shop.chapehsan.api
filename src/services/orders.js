@@ -33,18 +33,20 @@ function tehranClock(now = new Date()) {
   };
 }
 
-function nextBusinessDate(date) {
+function nextBusinessDate(date, openWeekdays) {
   const [year, month, day] = date.split("-").map(Number);
   const cursor = new Date(Date.UTC(year, month - 1, day));
   do {
     cursor.setUTCDate(cursor.getUTCDate() + 1);
-  } while (cursor.getUTCDay() === 5);
+  } while (!openWeekdays.includes(cursor.getUTCDay()));
   return cursor.getUTCFullYear() + "-" +
     String(cursor.getUTCMonth() + 1).padStart(2, "0") + "-" +
     String(cursor.getUTCDate()).padStart(2, "0");
 }
 
-function validateOrderSchedule(payload, currentUser) {
+async function validateOrderSchedule(payload, currentUser) {
+  const { getOrderScheduleSettings } = require("./order-schedule");
+  const settings = await getOrderScheduleSettings();
   const deliveryDate = String(payload.delivery_date || "").slice(0, 10);
   const deliveryTime = String(payload.delivery_time || "").slice(0, 5);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(deliveryDate) || !/^\d{2}:\d{2}$/.test(deliveryTime)) {
@@ -59,18 +61,19 @@ function validateOrderSchedule(payload, currentUser) {
   ) {
     throw httpError("تاریخ ارسال معتبر نیست", 400, "INVALID_DELIVERY_DATE");
   }
-  if (parsedDate.getUTCDay() === 5) {
-    throw httpError("جمعه روز کاری نیست؛ تاریخ دیگری انتخاب کنید", 400, "NON_BUSINESS_DELIVERY_DATE");
+  if (!settings.openWeekdays.includes(parsedDate.getUTCDay())) {
+    throw httpError("این روز کاری نیست؛ تاریخ دیگری انتخاب کنید", 400, "NON_BUSINESS_DELIVERY_DATE");
   }
   const [hour, minute] = deliveryTime.split(":").map(Number);
-  const deliveryMinutes = hour * 60 + minute;
   if (!Number.isInteger(hour) || !Number.isInteger(minute) || minute > 59 ||
-      deliveryMinutes < 9 * 60 || deliveryMinutes > 20 * 60 + 30) {
-    throw httpError("ساعت ارسال باید بین ۹:۰۰ تا ۲۰:۳۰ باشد", 400, "INVALID_DELIVERY_TIME");
+      deliveryTime < settings.deliveryStartTime || deliveryTime > settings.deliveryEndTime) {
+    throw httpError(`ساعت ارسال باید بین ${settings.deliveryStartTime} تا ${settings.deliveryEndTime} باشد`, 400, "INVALID_DELIVERY_TIME");
   }
   const now = tehranClock();
-  const isOpen = now.weekday !== "Fri" && now.time >= "09:00" && now.time < "19:00";
-  const earliestDate = isOpen ? now.date : nextBusinessDate(now.date);
+  const weekdayNumbers = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const isOpen = settings.openWeekdays.includes(weekdayNumbers[now.weekday]) &&
+    now.time >= settings.orderOpenTime && now.time < settings.orderCutoffTime;
+  const earliestDate = isOpen ? now.date : nextBusinessDate(now.date, settings.openWeekdays);
   if (deliveryDate < earliestDate) {
     throw httpError("تاریخ ارسال نمی‌تواند پیش از نزدیک‌ترین روز کاری باشد", 400, "DELIVERY_DATE_TOO_EARLY");
   }
@@ -81,7 +84,7 @@ function validateOrderSchedule(payload, currentUser) {
   if (!isOpen && currentUser.role !== "admin") {
     if (!confirmedNextBusinessDay) {
       throw httpError(
-        "ساعت ثبت سفارش سریع ۹ تا ۱۹ است. برای ثبت سفارش خارج از این ساعت، انجام آن در روز کاری بعد را تأیید کنید.",
+        `ساعت ثبت سفارش سریع ${settings.orderOpenTime} تا ${settings.orderCutoffTime} است. برای ثبت سفارش خارج از این ساعت، انجام آن در روز کاری بعد را تأیید کنید.`,
         400,
         "NEXT_BUSINESS_DAY_CONFIRMATION_REQUIRED"
       );
@@ -435,7 +438,7 @@ async function createOrder(payload, currentUser) {
   const isPickup = Boolean(payload.is_pickup);
   const addressId = payload.address_id || null;
   validateAddressRule(isPickup, addressId);
-  const schedule = validateOrderSchedule(payload, currentUser);
+  const schedule = await validateOrderSchedule(payload, currentUser);
 
   const items = Array.isArray(payload.items) ? payload.items : [];
   let totalPrice =

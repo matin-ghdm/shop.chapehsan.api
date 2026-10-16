@@ -21,6 +21,7 @@ app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.use("/users", usersRouter);
 app.use("/otp", require("./routes/otp"));
 app.use("/orders", ordersRouter);
+app.use("/order-schedule", require("./routes/order-schedule"));
 app.use("/order-items", orderItemsRouter);
 app.use("/addresses", addressesRouter);
 app.use("/slides", slidesRouter);
@@ -176,6 +177,7 @@ async function startServer() {
   await require("./migrations/ensure-service-requests").ensureServiceRequests();
   await require("./migrations/ensure-customer-roles").ensureCustomerRoles();
   await require("./migrations/ensure-order-delivery-schedule").ensureOrderDeliverySchedule();
+  await require("./migrations/ensure-order-schedule-settings").ensureOrderScheduleSettings();
   app.listen(PORT, async () => {
   console.log(`Server listening on http://localhost:${PORT}`);
   console.log(`Swagger UI: http://localhost:${PORT}/api-docs`);

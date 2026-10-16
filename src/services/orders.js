@@ -365,15 +365,18 @@ async function insertItems(client, orderId, items) {
   const inserted = [];
   for (const item of items) {
     const designId = await resolveDesignId(client, item);
+    const quantity = Number(item.quantity ?? 1);
 
     if (item.unit_price === undefined || item.unit_price === null) {
       throw httpError("unit_price برای آیتم الزامی است", 400, "VALIDATION_ERROR");
     }
-    const quantity = Number(item.quantity ?? 1);
     let unitPrice = Number(item.unit_price);
     let customData = item.custom_data || {};
     const designResult = await client.query("SELECT type, price, is_active, product_options FROM designs WHERE id = $1", [designId]);
     const design = designResult.rows[0];
+    if (["davati", "hamdardi"].includes(design?.type) && quantity < 20) {
+      throw httpError("حداقل تعداد سفارش این کارت ۲۰ عدد است", 400, "MINIMUM_QUANTITY_REQUIRED");
+    }
     if (design?.type) customData = { ...customData, design_type: design.type };
     if (design?.type === "occasion") {
       if (!design.is_active) throw httpError("این محصول غیرفعال است", 400, "VALIDATION_ERROR");

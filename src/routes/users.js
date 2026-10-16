@@ -50,6 +50,10 @@ router.get("/me", authenticate, async (req, res) => {
 });
 
 router.get("/:id", authenticate, async (req, res) => {
+  if (req.user.id !== req.params.id && req.user.role !== "admin") {
+    return res.status(403).json({ message: "Forbidden", code: "FORBIDDEN" });
+  }
+
   try {
     const user = await usersService.findById(req.params.id);
     if (!user) {

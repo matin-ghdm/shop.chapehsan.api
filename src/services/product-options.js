@@ -72,7 +72,12 @@ function normalizeProductOptions(input) {
     extraIds.add(id);
     return { id, name: text(extra.name), price: amount(extra.price) };
   });
-  return { variants, fields, extras };
+  if (input.specifications !== undefined && (!Array.isArray(input.specifications) || input.specifications.length > 30)) throw invalid("حداکثر ۳۰ مشخصه برای هر کالا مجاز است");
+  const specifications = input.specifications?.map(row => {
+    if (!row || typeof row !== "object") throw invalid("مشخصات کالا معتبر نیست");
+    return { label: text(row.label, 80), value: text(row.value, 1000) };
+  });
+  return { variants, fields, extras, ...(specifications !== undefined ? { specifications } : {}) };
 }
 function quoteProduct(design, selection) {
   const options = normalizeProductOptions(design.product_options);

@@ -17,6 +17,6 @@ test("custom dimensions use the configured area rate and reject unavailable or i
 });
 test("legacy products work without variants; malformed configurations cannot be saved", () => {
   assert.equal(quoteProduct({ price: 500000 }, null).price, 500000);
-  assert.deepEqual(normalizeProductOptions(), { variants: [] });
+  assert.deepEqual(normalizeProductOptions(), { variants: [], fields: [], extras: [] });
   for (const variants of [[{ ...wall, price: -1 }], [wall, wall], [{ ...wall, image_path: "javascript:alert(1)" }], [{ ...wall, custom_size: { enabled: true, price_per_m2: 0 } }]]) assert.throws(() => normalizeProductOptions({ variants }), { code: "VALIDATION_ERROR" });
 });

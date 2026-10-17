@@ -12,7 +12,58 @@ const ORDER_STATUSES = [
 ];
 
 const ORDER_COLUMNS =
-  "id, user_id, address_id, is_pickup, status, total_price, subtotal_price, discount_code, discount_amount, shipping_fee, delivery_date, delivery_time, next_business_day_confirmed, wallet_amount, amount_before_wallet, note, created_at, payment_track_id, payment_ref_number, payment_card_number, paid_at";
+  "id, user_id, address_id, is_pickup, status, total_price, subtotal_price, discount_code, discount_amount, shipping_fee, delivery_date, delivery_time, next_business_day_confirmed, wallet_amount, amount_before_wallet, note, created_at, payment_track_id, payment_ref_number, payment_card_number, paid_at, invoice_type, invoice_name, invoice_national_id, invoice_economic_code, invoice_registration_number, invoice_phone, invoice_address, invoice_postal_code, invoice_issued_at";
+
+const INVOICE_FIELDS = [
+  "invoice_type",
+  "invoice_name",
+  "invoice_national_id",
+  "invoice_economic_code",
+  "invoice_registration_number",
+  "invoice_phone",
+  "invoice_address",
+  "invoice_postal_code",
+];
+
+function normalizeInvoicePayload(payload = {}) {
+  const type = String(payload.invoice_type || "").trim();
+  const name = String(payload.invoice_name || "").trim();
+  if (type !== "personal" && type !== "company") {
+    throw httpError("نوع فاکتور را انتخاب کنید", 400, "INVALID_INVOICE_TYPE");
+  }
+  if (!name) {
+    throw httpError(type === "company" ? "نام رسمی شرکت را وارد کنید" : "نام خریدار را وارد کنید", 400, "INVOICE_NAME_REQUIRED");
+  }
+  const nationalId = String(payload.invoice_national_id || "").trim();
+  if (type === "company" && !nationalId) {
+    throw httpError("شناسه ملی شرکت را وارد کنید", 400, "INVOICE_NATIONAL_ID_REQUIRED");
+  }
+  const values = {
+    invoice_type: type,
+    invoice_name: name,
+    invoice_national_id: nationalId,
+    invoice_economic_code: String(payload.invoice_economic_code || "").trim(),
+    invoice_registration_number: String(payload.invoice_registration_number || "").trim(),
+    invoice_phone: String(payload.invoice_phone || "").trim(),
+    invoice_address: String(payload.invoice_address || "").trim(),
+    invoice_postal_code: String(payload.invoice_postal_code || "").trim(),
+  };
+  const limits = {
+    invoice_name: 200,
+    invoice_national_id: 32,
+    invoice_economic_code: 32,
+    invoice_registration_number: 32,
+    invoice_phone: 32,
+    invoice_address: 1000,
+    invoice_postal_code: 20,
+  };
+  for (const [field, max] of Object.entries(limits)) {
+    if (values[field].length > max) {
+      throw httpError("یکی از مشخصات فاکتور بیش از حد طولانی است", 400, "INVOICE_FIELD_TOO_LONG");
+    }
+  }
+  return values;
+}
 
 function tehranClock(now = new Date()) {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -663,6 +714,90 @@ async function updateOrder(id, payload) {
   }
 }
 
+async function issueInvoice(id, payload, currentUser) {
+  const invoice = normalizeInvoicePayload(payload);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const locked = await client.query(
+      `SELECT ${ORDER_COLUMNS} FROM orders WHERE id = $1 FOR UPDATE`,
+      [id],
+    );
+    const order = locked.rows[0];
+    assertOrderAccess(order, currentUser);
+    if (order.invoice_issued_at) {
+      throw httpError("فاکتور این سفارش قبلاً صادر شده و فقط مدیر می‌تواند آن را ویرایش کند", 409, "INVOICE_ALREADY_ISSUED");
+    }
+    const result = await client.query(
+      `UPDATE orders SET
+        invoice_type = $1,
+        invoice_name = $2,
+        invoice_national_id = $3,
+        invoice_economic_code = $4,
+        invoice_registration_number = $5,
+        invoice_phone = $6,
+        invoice_address = $7,
+        invoice_postal_code = $8,
+        invoice_issued_at = NOW()
+       WHERE id = $9
+       RETURNING ${ORDER_COLUMNS}`,
+      [
+        invoice.invoice_type,
+        invoice.invoice_name,
+        invoice.invoice_national_id,
+        invoice.invoice_economic_code,
+        invoice.invoice_registration_number,
+        invoice.invoice_phone,
+        invoice.invoice_address,
+        invoice.invoice_postal_code,
+        id,
+      ],
+    );
+    const items = await getItemsByOrderId(id, client);
+    await client.query("COMMIT");
+    return { ...result.rows[0], items };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function updateOrderInvoice(id, payload) {
+  const invoice = normalizeInvoicePayload(payload);
+  const current = await findById(id);
+  if (!current) throw httpError("سفارش پیدا نشد", 404, "NOT_FOUND");
+  if (!current.invoice_issued_at) {
+    throw httpError("فاکتور این سفارش هنوز توسط مشتری صادر نشده است", 409, "INVOICE_NOT_ISSUED");
+  }
+  const result = await query(
+    `UPDATE orders SET
+      invoice_type = $1,
+      invoice_name = $2,
+      invoice_national_id = $3,
+      invoice_economic_code = $4,
+      invoice_registration_number = $5,
+      invoice_phone = $6,
+      invoice_address = $7,
+      invoice_postal_code = $8
+     WHERE id = $9
+     RETURNING ${ORDER_COLUMNS}`,
+    [
+      invoice.invoice_type,
+      invoice.invoice_name,
+      invoice.invoice_national_id,
+      invoice.invoice_economic_code,
+      invoice.invoice_registration_number,
+      invoice.invoice_phone,
+      invoice.invoice_address,
+      invoice.invoice_postal_code,
+      id,
+    ],
+  );
+  return { ...result.rows[0], items: await getItemsByOrderId(id) };
+}
+
 async function deleteOrder(id) {
   const order = await findById(id);
   if (!order) throw httpError("سفارش پیدا نشد", 404, "NOT_FOUND");
@@ -695,6 +830,9 @@ module.exports = {
   findById,
   createOrder,
   updateOrder,
+  issueInvoice,
+  updateOrderInvoice,
+  normalizeInvoicePayload,
   deleteOrder,
   getItemsByOrderId,
   assertOrderAccess,

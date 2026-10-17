@@ -58,6 +58,35 @@ router.post("/", async (req, res) => {
   }
 });
 
+router.post("/:id/invoice", async (req, res) => {
+  try {
+    const order = await ordersService.issueInvoice(req.params.id, req.body, req.user);
+    res.status(201).json({ order });
+  } catch (err) {
+    res.status(err.status || 500).json({
+      message: err.message || "صدور فاکتور ناموفق بود",
+      code: err.code,
+    });
+  }
+});
+
+router.put("/:id/invoice", async (req, res) => {
+  try {
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ message: "ویرایش فاکتور فقط برای مدیر مجاز است", code: "FORBIDDEN" });
+    }
+    const existing = await ordersService.findById(req.params.id);
+    ordersService.assertOrderAccess(existing, req.user);
+    const order = await ordersService.updateOrderInvoice(req.params.id, req.body);
+    res.json({ order });
+  } catch (err) {
+    res.status(err.status || 500).json({
+      message: err.message || "ویرایش فاکتور ناموفق بود",
+      code: err.code,
+    });
+  }
+});
+
 router.put("/:id", async (req, res) => {
   try {
     if (req.user.role !== "admin" && (req.body?.status !== undefined || req.body?.total_price !== undefined)) {

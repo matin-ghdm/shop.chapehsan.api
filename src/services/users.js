@@ -20,6 +20,7 @@ function toPublicUser(row) {
     role: row.role,
     permissions: normalizePermissions(row.permissions),
     created_at: row.created_at,
+    is_active: row.is_active !== false,
   };
 }
 
@@ -50,7 +51,7 @@ async function findById(id) {
 
 async function listUsers() {
   const result = await query(
-    `SELECT ${SAFE_COLUMNS} FROM users WHERE is_active = TRUE ORDER BY created_at DESC`
+    `SELECT ${SAFE_COLUMNS} FROM users ORDER BY is_active DESC, created_at DESC`
   );
   return result.rows.map(toPublicUser);
 }
@@ -329,6 +330,9 @@ async function updateUser(id, payload = {}, actor = null) {
     }
     fields.push(`role = $${i++}`);
     values.push(normalized === "user" ? null : normalized);
+    if (isExplicitCustomerConversion) {
+      fields.push("is_active = TRUE");
+    }
     if ((normalized === null || normalized === "user") && permissions === undefined) {
       fields.push(`permissions = $${i++}::jsonb`);
       values.push("[]");

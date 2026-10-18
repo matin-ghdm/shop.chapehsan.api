@@ -79,7 +79,18 @@ function normalizeProductOptions(input) {
   });
   return { variants, fields, extras, ...(specifications !== undefined ? { specifications } : {}) };
 }
-function quoteProduct(design, selection) {
+function quoteProduct(design, selection, productQuantity = 1) {
+  function selectedExtras(configured, ids) {
+    if (!Array.isArray(ids) || ids.length > configured.length || new Set(ids).size !== ids.length) throw invalid("خدمات انتخاب‌شده معتبر نیست");
+    const submitted = new Map((Array.isArray(selection?.extras) ? selection.extras : []).map(extra => [extra?.id, extra?.quantity]));
+    return ids.map(id => {
+      const extra = configured.find(item => item.id === id);
+      if (!extra) throw invalid("خدمت یا جنس انتخاب‌شده برای این محصول موجود نیست");
+      const quantity = submitted.get(id) == null ? productQuantity : Number(submitted.get(id));
+      if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 999) throw invalid("تعداد خدمت یا جنس اضافه معتبر نیست");
+      return { ...extra, quantity };
+    });
+  }
   const options = normalizeProductOptions(design.product_options);
   const variants = options.variants;
   if (!variants.length) {
@@ -96,21 +107,17 @@ function quoteProduct(design, selection) {
       if (value.length > 1000) throw invalid(`مقدار «${field.label}» بیش از حد طولانی است`);
       if (value && field.kind === "number" && !/^[0-9۰-۹٠-٩]+$/.test(value)) throw invalid(`«${field.label}» را فقط با عدد وارد کنید`);
       if (value && ["select", "color"].includes(field.kind) && !field.options.includes(value)) throw invalid(`گزینهٔ «${field.label}» معتبر نیست`);
-      if (value) return { id: field.id, label: field.label, value };
-      return null;
+      return value ? { id: field.id, label: field.label, value } : null;
     }).filter(Boolean);
     if (submittedFields.some(field => !options.fields.some(configured => configured.id === field?.id))) throw invalid("مشخصهٔ ارسالی برای این محصول تعریف نشده است");
     const ids = selection?.extra_ids ?? [];
-    if (!Array.isArray(ids) || ids.length > options.extras.length || new Set(ids).size !== ids.length) throw invalid("خدمات انتخاب‌شده معتبر نیست");
-    const extras = ids.map(id => {
-      const extra = options.extras.find(item => item.id === id);
-      if (!extra) throw invalid("خدمت یا جنس انتخاب‌شده برای این محصول موجود نیست");
-      return extra;
-    });
-    const price = amount(design.price, true) + extras.reduce((sum, extra) => sum + extra.price, 0);
-    if (!Number.isSafeInteger(price) || price > 1000000000) throw invalid("قیمت این ترکیب از محدودهٔ مجاز خارج است");
+    const extras = selectedExtras(options.extras, ids);
+    const price = amount(design.price, true);
+    const total = price + extras.reduce((sum, extra) => sum + extra.price * extra.quantity, 0);
+    const legacyPrice = price + extras.reduce((sum, extra) => sum + extra.price, 0);
+    if (!Number.isSafeInteger(total) || total > 1000000000) throw invalid("قیمت این ترکیب از محدودهٔ مجاز خارج است");
     const configured = options.fields.length > 0 || options.extras.length > 0;
-    return { price, selection: configured ? { fields, extra_ids: ids, extras } : null };
+    return { price, legacyPrice, selection: configured ? { fields, extra_ids: ids, extras } : null };
   }
   const v = variants.find(v => v.id === selection?.variant_id);
   if (!v) throw invalid("نوع محصول انتخاب‌شده در دسترس نیست؛ دوباره انتخاب کنید");
@@ -122,14 +129,10 @@ function quoteProduct(design, selection) {
     price = Math.ceil(width * height / 10000 * v.custom_size.price_per_m2);
   }
   const ids = selection.extra_ids ?? [];
-  if (!Array.isArray(ids) || ids.length > 20 || new Set(ids).size !== ids.length) throw invalid("خدمات انتخاب‌شده معتبر نیست");
-  const extras = ids.map(id => {
-    const e = v.extras.find(e => e.id === id);
-    if (!e) throw invalid("خدمت انتخاب‌شده برای این نوع موجود نیست");
-    return e;
-  });
-  price += extras.reduce((sum, e) => sum + e.price, 0);
-  if (!Number.isSafeInteger(price) || price < 1 || price > 1000000000) throw invalid("قیمت این ترکیب از محدودهٔ مجاز خارج است؛ ابعاد یا خدمات را تغییر دهید");
-  return { price, selection: { variant_id: v.id, variant_name: v.name, kind: v.kind, width_cm: width, height_cm: height, custom_size: custom, extra_ids: ids, extras, image_path: v.image_path } };
+  const extras = selectedExtras(v.extras, ids);
+  const legacyPrice = price + extras.reduce((sum, e) => sum + e.price, 0);
+  const total = price + extras.reduce((sum, e) => sum + e.price * e.quantity, 0);
+  if (!Number.isSafeInteger(total) || price < 1 || total > 1000000000) throw invalid("قیمت این ترکیب از محدودهٔ مجاز خارج است؛ ابعاد یا خدمات را تغییر دهید");
+  return { price, legacyPrice, selection: { variant_id: v.id, variant_name: v.name, kind: v.kind, width_cm: width, height_cm: height, custom_size: custom, extra_ids: ids, extras, image_path: v.image_path } };
 }
 module.exports = { normalizeProductOptions, quoteProduct };

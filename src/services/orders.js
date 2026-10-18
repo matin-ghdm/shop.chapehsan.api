@@ -418,6 +418,9 @@ async function insertItems(client, orderId, items) {
   for (const item of items) {
     const designId = await resolveDesignId(client, item);
     const quantity = Number(item.quantity ?? 1);
+    if (!Number.isInteger(quantity) || quantity <= 0 || quantity > 999) {
+      throw httpError("quantity باید عدد صحیح بین ۱ و ۹۹۹ باشد", 400, "VALIDATION_ERROR");
+    }
 
     if (item.unit_price === undefined || item.unit_price === null) {
       throw httpError("unit_price برای آیتم الزامی است", 400, "VALIDATION_ERROR");
@@ -432,15 +435,15 @@ async function insertItems(client, orderId, items) {
     if (design?.type) customData = { ...customData, design_type: design.type };
     if (design?.type === "occasion") {
       if (!design.is_active) throw httpError("این محصول غیرفعال است", 400, "VALIDATION_ERROR");
-      const quote = require("./product-options").quoteProduct(design, customData.productSelection);
-      if (unitPrice !== quote.price) throw httpError("قیمت محصول تغییر کرده است؛ محصول را دوباره به سبد اضافه کنید", 409, "PRICE_CHANGED");
+      const quote = require("./product-options").quoteProduct(design, customData.productSelection, quantity);
+      if (unitPrice !== quote.price && unitPrice !== quote.legacyPrice) throw httpError("قیمت محصول تغییر کرده است؛ محصول را دوباره به سبد اضافه کنید", 409, "PRICE_CHANGED");
       unitPrice = quote.price;
       customData = { ...customData, design_type: "occasion", type: "occasion-banner", productSelection: quote.selection };
     }
     if (design?.type === "decorative" || design?.type === "laser") {
       if (!design.is_active) throw httpError("این محصول غیرفعال است", 400, "VALIDATION_ERROR");
-      const quote = require("./product-options").quoteProduct(design, customData.productSelection);
-      if (unitPrice !== quote.price) {
+      const quote = require("./product-options").quoteProduct(design, customData.productSelection, quantity);
+      if (unitPrice !== quote.price && unitPrice !== quote.legacyPrice) {
         throw httpError("قیمت محصول تغییر کرده است؛ محصول را دوباره به سبد اضافه کنید", 409, "PRICE_CHANGED");
       }
       unitPrice = quote.price;
@@ -478,10 +481,13 @@ async function insertItems(client, orderId, items) {
 }
 
 function calcTotalFromItems(items) {
-  return items.reduce(
-    (sum, item) => sum + Number(item.quantity) * Number(item.unit_price),
-    0
-  );
+  return items.reduce((sum, item) => {
+    const extras = item.custom_data?.productSelection?.extras;
+    if (Array.isArray(extras) && extras.length > 0 && extras.every(extra => Number.isInteger(Number(extra.quantity)) && Number(extra.quantity) > 0)) {
+      return sum + Number(item.quantity) * Number(item.unit_price) + extras.reduce((extraSum, extra) => extraSum + Number(extra.price) * Number(extra.quantity), 0);
+    }
+    return sum + Number(item.quantity) * Number(item.unit_price);
+  }, 0);
 }
 
 async function createOrder(payload, currentUser) {

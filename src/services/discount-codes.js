@@ -89,7 +89,11 @@ function subtotalForProductType(items, productType) {
     if (!DISCOUNT_TARGET_TYPES.has(type) || type === "all" || !Number.isSafeInteger(quantity) || quantity < 1 || !Number.isSafeInteger(unitPrice) || unitPrice < 0) {
       throw fail("اطلاعات محصولات سبد خرید معتبر نیست");
     }
-    if (type === productType) eligibleSubtotal += quantity * unitPrice;
+    if (type === productType) {
+      const extras = item?.custom_data?.productSelection?.extras;
+      const hasIndependentExtras = Array.isArray(extras) && extras.length > 0 && extras.every(extra => Number.isSafeInteger(Number(extra.quantity)) && Number(extra.quantity) > 0);
+      eligibleSubtotal += quantity * unitPrice + (hasIndependentExtras ? extras.reduce((sum, extra) => sum + Number(extra.price) * Number(extra.quantity), 0) : 0);
+    }
   }
   if (!Number.isSafeInteger(eligibleSubtotal) || eligibleSubtotal < 1) {
     const label = PRODUCT_TYPE_LABELS[productType] || "محصول انتخاب‌شده";

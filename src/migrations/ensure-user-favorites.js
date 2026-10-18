@@ -18,6 +18,11 @@ async function ensureUserFavoritesTable() {
     CREATE INDEX IF NOT EXISTS user_favorites_user_created_idx
       ON user_favorites (user_id, created_at DESC)
   `);
+
+  await query(`
+    CREATE INDEX IF NOT EXISTS user_favorites_item_count_idx
+      ON user_favorites (item_type, item_key)
+  `);
 }
 
 module.exports = { ensureUserFavoritesTable };

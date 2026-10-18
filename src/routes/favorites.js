@@ -41,6 +41,28 @@ function normalizeItem(raw = {}) {
   return { itemType, itemKey, title, href };
 }
 
+// Aggregate counts are public catalog data; personal favorite records stay private.
+router.get("/counts", async (_req, res) => {
+  try {
+    const result = await query(
+      `SELECT item_type, item_key, COUNT(*)::int AS count
+       FROM user_favorites
+       GROUP BY item_type, item_key`,
+    );
+    res.set("Cache-Control", "public, max-age=30, stale-while-revalidate=60");
+    res.json({
+      counts: result.rows.map((row) => ({
+        itemType: row.item_type,
+        itemKey: row.item_key,
+        count: row.count,
+      })),
+    });
+  } catch (err) {
+    console.error("List favorite counts failed:", err.message);
+    res.status(500).json({ message: "دریافت تعداد پسندها ناموفق بود" });
+  }
+});
+
 router.use(authenticate);
 
 router.get("/", async (req, res) => {

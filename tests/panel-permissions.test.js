@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   normalizePermissions,
+  isPanelAccount,
   hasPermission,
 } = require("../src/lib/panel-permissions");
 
@@ -37,6 +38,9 @@ test("order management includes viewing, while viewing does not grant editing", 
 });
 
 test("accounts without the staff or admin role cannot use stale permissions", () => {
+  assert.equal(isPanelAccount({ role: null }), false);
+  assert.equal(isPanelAccount({ role: "user" }), false);
+  assert.equal(isPanelAccount({ role: "staff" }), true);
   assert.equal(
     hasPermission({ role: null, permissions: ["orders.manage"] }, "orders.view"),
     false,

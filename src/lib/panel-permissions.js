@@ -16,9 +16,14 @@ function normalizePermissions(value) {
   return [...new Set(value.filter((permission) => PANEL_PERMISSIONS.includes(permission)))];
 }
 
+function isPanelAccount(user) {
+  return ["admin", "staff"].includes(String(user?.role || "").trim().toLowerCase());
+}
+
 function hasPermission(user, permission) {
-  if (user?.role === "admin") return true;
-  if (String(user?.role || "").trim().toLowerCase() !== "staff") return false;
+  const role = String(user?.role || "").trim().toLowerCase();
+  if (role === "admin") return true;
+  if (!isPanelAccount(user) || role !== "staff") return false;
   const permissions = normalizePermissions(user?.permissions);
   if (permissions.includes(permission)) return true;
   return permission === "orders.view" && permissions.includes("orders.manage");
@@ -33,4 +38,4 @@ function requirePermission(permission) {
   };
 }
 
-module.exports = { PANEL_PERMISSIONS, normalizePermissions, hasPermission, requirePermission };
+module.exports = { PANEL_PERMISSIONS, normalizePermissions, isPanelAccount, hasPermission, requirePermission };

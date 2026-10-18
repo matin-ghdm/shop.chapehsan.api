@@ -2,7 +2,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { query } = require("../db");
 const otpService = require("./otp");
-const { normalizePermissions, PANEL_PERMISSIONS } = require("../lib/panel-permissions");
+const { normalizePermissions, isPanelAccount, PANEL_PERMISSIONS } = require("../lib/panel-permissions");
 
 const JWT_SECRET = process.env.JWT_SECRET || "chapehsan-secret-change-me";
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "7d";
@@ -294,6 +294,12 @@ async function updateUser(id, payload = {}, actor = null) {
       error.status = 400;
       throw error;
     }
+    if (!isPanelAccount(current) && ["admin", "staff"].includes(normalized)) {
+      const error = new Error("مشتری را نمی‌توان به کاربر پنل تبدیل کرد؛ حساب کاربر پنل را جداگانه ایجاد کنید");
+      error.status = 403;
+      error.code = "CUSTOMER_PANEL_ACCESS_FORBIDDEN";
+      throw error;
+    }
     if (current.role === "admin" && normalized !== "admin") {
       const others = await query(
         `SELECT COUNT(*)::int AS count FROM users
@@ -326,6 +332,12 @@ async function updateUser(id, payload = {}, actor = null) {
       throw error;
     }
     const normalizedPermissions = normalizePermissions(permissions);
+    if (normalizedPermissions.length && !isPanelAccount(current)) {
+      const error = new Error("مشتری به پنل مدیریت دسترسی نمی‌گیرد؛ حساب کاربر پنل را جداگانه ایجاد کنید");
+      error.status = 403;
+      error.code = "CUSTOMER_PANEL_ACCESS_FORBIDDEN";
+      throw error;
+    }
     if (current.role !== "admin" && role === undefined) {
       fields.push(`role = $${i++}`);
       values.push(normalizedPermissions.length ? "staff" : null);

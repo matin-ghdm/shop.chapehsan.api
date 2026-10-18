@@ -86,7 +86,7 @@ async function createAdminUser(raw = {}) {
     return toPublicUser(result.rows[0]);
   } catch (err) {
     if (err.code === "23505") {
-      const error = new Error("این شماره موبایل قبلاً ثبت شده است");
+      const error = new Error("این شماره قبلاً حساب سایت دارد؛ برای حفظ حساب و سفارش‌هایش، از فهرست مشتریان گزینهٔ «تبدیل به کاربر پنل» را بزنید.");
       error.status = 409;
       error.code = "PHONE_EXISTS";
       throw error;
@@ -294,10 +294,20 @@ async function updateUser(id, payload = {}, actor = null) {
       error.status = 400;
       throw error;
     }
-    if (!isPanelAccount(current) && ["admin", "staff"].includes(normalized)) {
-      const error = new Error("مشتری را نمی‌توان به کاربر پنل تبدیل کرد؛ حساب کاربر پنل را جداگانه ایجاد کنید");
+    const isExplicitCustomerConversion =
+      !isPanelAccount(current) &&
+      actor?.role === "admin" &&
+      ["admin", "staff"].includes(normalized);
+    if (!isPanelAccount(current) && ["admin", "staff"].includes(normalized) && !isExplicitCustomerConversion) {
+      const error = new Error("تبدیل حساب مشتری به کاربر پنل فقط با اقدام مدیر مجاز است");
       error.status = 403;
       error.code = "CUSTOMER_PANEL_ACCESS_FORBIDDEN";
+      throw error;
+    }
+    if (isExplicitCustomerConversion && normalized === "staff" && (!Array.isArray(permissions) || permissions.length === 0)) {
+      const error = new Error("برای تبدیل مشتری به کاربر پنل، دست‌کم یک دسترسی انتخاب کنید");
+      error.status = 400;
+      error.code = "PANEL_PERMISSION_REQUIRED";
       throw error;
     }
     if (current.role === "admin" && normalized !== "admin") {
@@ -332,8 +342,12 @@ async function updateUser(id, payload = {}, actor = null) {
       throw error;
     }
     const normalizedPermissions = normalizePermissions(permissions);
-    if (normalizedPermissions.length && !isPanelAccount(current)) {
-      const error = new Error("مشتری به پنل مدیریت دسترسی نمی‌گیرد؛ حساب کاربر پنل را جداگانه ایجاد کنید");
+    const isExplicitCustomerConversion =
+      !isPanelAccount(current) &&
+      actor?.role === "admin" &&
+      ["admin", "staff"].includes(String(role || "").trim().toLowerCase());
+    if (normalizedPermissions.length && !isPanelAccount(current) && !isExplicitCustomerConversion) {
+      const error = new Error("دسترسی پنل فقط با اقدام مدیر برای همین حساب فعال می‌شود");
       error.status = 403;
       error.code = "CUSTOMER_PANEL_ACCESS_FORBIDDEN";
       throw error;

@@ -1,18 +1,11 @@
 const express = require("express");
 const designsService = require("../services/designs");
 const { authenticate } = require("../middleware/auth");
+const { requirePermission } = require("../lib/panel-permissions");
 
 const router = express.Router();
 
-function requireAdmin(req, res, next) {
-  if (req.user.role !== "admin") {
-    return res.status(403).json({
-      message: "فقط ادمین مجاز است",
-      code: "FORBIDDEN",
-    });
-  }
-  next();
-}
+const requireProductAccess = requirePermission("products.manage");
 
 // Public: active designs only
 router.get("/", async (req, res) => {
@@ -32,7 +25,7 @@ router.get("/", async (req, res) => {
 });
 
 // Admin: all designs including inactive
-router.get("/admin/all", authenticate, requireAdmin, async (req, res) => {
+router.get("/admin/all", authenticate, requireProductAccess, async (req, res) => {
   try {
     const designs = await designsService.listDesigns({
       type: req.query.type || null,
@@ -48,7 +41,7 @@ router.get("/admin/all", authenticate, requireAdmin, async (req, res) => {
   }
 });
 
-router.put("/type/:type/price", authenticate, requireAdmin, async (req, res) => {
+router.put("/type/:type/price", authenticate, requireProductAccess, async (req, res) => {
   try {
     const result = await designsService.updatePriceByType(
       req.params.type,
@@ -93,7 +86,7 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-router.post("/", authenticate, requireAdmin, async (req, res) => {
+router.post("/", authenticate, requireProductAccess, async (req, res) => {
   try {
     const design = await designsService.createDesign(req.body);
     res.status(201).json({ design });
@@ -105,7 +98,7 @@ router.post("/", authenticate, requireAdmin, async (req, res) => {
   }
 });
 
-router.put("/:id", authenticate, requireAdmin, async (req, res) => {
+router.put("/:id", authenticate, requireProductAccess, async (req, res) => {
   try {
     const design = await designsService.updateDesign(req.params.id, req.body);
     res.json({ design });
@@ -117,7 +110,7 @@ router.put("/:id", authenticate, requireAdmin, async (req, res) => {
   }
 });
 
-router.delete("/:id", authenticate, requireAdmin, async (req, res) => {
+router.delete("/:id", authenticate, requireProductAccess, async (req, res) => {
   try {
     const design = await designsService.deleteDesign(req.params.id);
     res.json({ message: "طرح حذف شد", design });

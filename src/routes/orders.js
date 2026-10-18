@@ -2,6 +2,7 @@ const express = require("express");
 const ordersService = require("../services/orders");
 const orderItemsService = require("../services/orderItems");
 const { authenticate } = require("../middleware/auth");
+const { hasPermission } = require("../lib/panel-permissions");
 
 const router = express.Router();
 
@@ -9,7 +10,7 @@ router.use(authenticate);
 
 router.get("/", async (req, res) => {
   try {
-    const userId = req.user.role === "admin" ? req.query.user_id || null : req.user.id;
+    const userId = hasPermission(req.user, "orders.view") ? req.query.user_id || null : req.user.id;
     const result = await ordersService.listOrders({
       userId,
       status: req.query.status || null,
@@ -60,6 +61,12 @@ router.post("/", async (req, res) => {
 
 router.post("/:id/invoice", async (req, res) => {
   try {
+    if (!hasPermission(req.user, "orders.manage")) {
+      const existing = await ordersService.findById(req.params.id);
+      if (existing?.user_id !== req.user.id) {
+        return res.status(403).json({ message: "صدور فاکتور فقط برای صاحب سفارش یا مدیر سفارش مجاز است", code: "FORBIDDEN" });
+      }
+    }
     const order = await ordersService.issueInvoice(req.params.id, req.body, req.user);
     res.status(201).json({ order });
   } catch (err) {
@@ -72,7 +79,7 @@ router.post("/:id/invoice", async (req, res) => {
 
 router.put("/:id/invoice", async (req, res) => {
   try {
-    if (req.user.role !== "admin") {
+    if (!hasPermission(req.user, "orders.manage")) {
       return res.status(403).json({ message: "ویرایش فاکتور فقط برای مدیر مجاز است", code: "FORBIDDEN" });
     }
     const existing = await ordersService.findById(req.params.id);
@@ -89,8 +96,8 @@ router.put("/:id/invoice", async (req, res) => {
 
 router.put("/:id", async (req, res) => {
   try {
-    if (req.user.role !== "admin" && (req.body?.status !== undefined || req.body?.total_price !== undefined)) {
-      return res.status(403).json({ message: "تغییر وضعیت یا مبلغ سفارش فقط برای مدیر مجاز است", code: "FORBIDDEN" });
+    if (!hasPermission(req.user, "orders.manage")) {
+      return res.status(403).json({ message: "تغییر سفارش فقط برای کاربر دارای دسترسی مدیریت سفارش مجاز است", code: "FORBIDDEN" });
     }
     const existing = await ordersService.findById(req.params.id);
     ordersService.assertOrderAccess(existing, req.user);
@@ -106,7 +113,7 @@ router.put("/:id", async (req, res) => {
 
 router.delete("/:id", async (req, res) => {
   try {
-    if (req.user.role !== "admin") {
+    if (!hasPermission(req.user, "orders.manage")) {
       return res.status(403).json({ message: "حذف سفارش فقط برای مدیر مجاز است", code: "FORBIDDEN" });
     }
     const existing = await ordersService.findById(req.params.id);
@@ -137,6 +144,9 @@ router.get("/:id/items", async (req, res) => {
 
 router.post("/:id/items", async (req, res) => {
   try {
+    if (!hasPermission(req.user, "orders.manage")) {
+      return res.status(403).json({ message: "تغییر اقلام سفارش فقط برای کاربر دارای دسترسی مدیریت سفارش مجاز است", code: "FORBIDDEN" });
+    }
     const item = await orderItemsService.createItem(
       { ...req.body, order_id: req.params.id },
       req.user

@@ -3,16 +3,14 @@ const { query } = require("../db");
 const { notifyServiceRequest } = require("../services/telegram-bot");
 const { parseRequestAttachments } = require("../lib/request-attachments");
 const { authenticate } = require("../middleware/auth");
+const { requirePermission } = require("../lib/panel-permissions");
 
 const router = express.Router();
 const clean = (value, max = 1000) => String(value ?? "").trim().slice(0, max);
 
-function requireAdmin(req, res, next) {
-  if (req.user?.role !== "admin") return res.status(403).json({ message: "دسترسی غیرمجاز" });
-  next();
-}
+const requireRequestsAccess = requirePermission("requests.manage");
 
-router.get("/admin/all", authenticate, requireAdmin, async (_req, res) => {
+router.get("/admin/all", authenticate, requireRequestsAccess, async (_req, res) => {
   try {
     const result = await query(
       `SELECT id, service_slug, service_label, customer_name, phone, item_description,

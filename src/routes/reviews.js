@@ -1,6 +1,7 @@
 const express = require("express");
 const { query } = require("../db");
 const { authenticate } = require("../middleware/auth");
+const { requirePermission } = require("../lib/panel-permissions");
 
 const router = express.Router();
 const ITEM_TYPES = new Set([
@@ -12,12 +13,7 @@ const ITEM_TYPES = new Set([
   "karbala",
 ]);
 
-function requireAdmin(req, res, next) {
-  if (req.user?.role !== "admin") {
-    return res.status(403).json({ message: "فقط ادمین مجاز است", code: "FORBIDDEN" });
-  }
-  next();
-}
+const requireReviewsAccess = requirePermission("reviews.manage");
 
 function normalizeItemType(value) {
   const itemType = String(value || "").trim().toLowerCase();
@@ -104,7 +100,7 @@ router.post("/", authenticate, async (req, res) => {
   }
 });
 
-router.get("/admin", authenticate, requireAdmin, async (req, res) => {
+router.get("/admin", authenticate, requireReviewsAccess, async (req, res) => {
   const allowedStatuses = new Set(["all", "pending", "approved", "rejected"]);
   const status = String(req.query.status || "pending");
   if (!allowedStatuses.has(status)) {
@@ -134,7 +130,7 @@ router.get("/admin", authenticate, requireAdmin, async (req, res) => {
   }
 });
 
-router.patch("/:id", authenticate, requireAdmin, async (req, res) => {
+router.patch("/:id", authenticate, requireReviewsAccess, async (req, res) => {
   const id = String(req.params.id || "");
   const status = String(req.body?.status || "");
   const adminReply = req.body?.admin_reply == null
@@ -167,7 +163,7 @@ router.patch("/:id", authenticate, requireAdmin, async (req, res) => {
   }
 });
 
-router.delete("/:id", authenticate, requireAdmin, async (req, res) => {
+router.delete("/:id", authenticate, requireReviewsAccess, async (req, res) => {
   if (!/^\d+$/.test(String(req.params.id || ""))) {
     return res.status(400).json({ message: "شناسهٔ دیدگاه معتبر نیست" });
   }

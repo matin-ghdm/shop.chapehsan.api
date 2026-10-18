@@ -1,18 +1,11 @@
 const express = require("express");
 const slidesService = require("../services/slides");
 const { authenticate } = require("../middleware/auth");
+const { requirePermission } = require("../lib/panel-permissions");
 
 const router = express.Router();
 
-function requireAdmin(req, res, next) {
-  if (req.user.role !== "admin") {
-    return res.status(403).json({
-      message: "فقط ادمین مجاز است",
-      code: "FORBIDDEN",
-    });
-  }
-  next();
-}
+const requireSlidesAccess = requirePermission("slides.manage");
 
 // Public: active slides for frontend
 router.get("/", async (req, res) => {
@@ -31,7 +24,7 @@ router.get("/", async (req, res) => {
 });
 
 // Admin: all slides including inactive
-router.get("/admin/all", authenticate, requireAdmin, async (req, res) => {
+router.get("/admin/all", authenticate, requireSlidesAccess, async (req, res) => {
   try {
     const slides = await slidesService.listSlides({
       placement: req.query.placement || null,
@@ -61,7 +54,7 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-router.post("/", authenticate, requireAdmin, async (req, res) => {
+router.post("/", authenticate, requireSlidesAccess, async (req, res) => {
   try {
     const slide = await slidesService.createSlide(req.body);
     res.status(201).json({ slide });
@@ -73,7 +66,7 @@ router.post("/", authenticate, requireAdmin, async (req, res) => {
   }
 });
 
-router.put("/:id", authenticate, requireAdmin, async (req, res) => {
+router.put("/:id", authenticate, requireSlidesAccess, async (req, res) => {
   try {
     const slide = await slidesService.updateSlide(req.params.id, req.body);
     res.json({ slide });
@@ -85,7 +78,7 @@ router.put("/:id", authenticate, requireAdmin, async (req, res) => {
   }
 });
 
-router.delete("/:id", authenticate, requireAdmin, async (req, res) => {
+router.delete("/:id", authenticate, requireSlidesAccess, async (req, res) => {
   try {
     const slide = await slidesService.deleteSlide(req.params.id);
     res.json({ message: "اسلاید حذف شد", slide });

@@ -2,11 +2,12 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { query } = require("../db");
 const otpService = require("./otp");
+const { normalizePermissions, PANEL_PERMISSIONS } = require("../lib/panel-permissions");
 
 const JWT_SECRET = process.env.JWT_SECRET || "chapehsan-secret-change-me";
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "7d";
 
-const SAFE_COLUMNS = "id, name, lname, phone, email, role, created_at, is_active";
+const SAFE_COLUMNS = "id, name, lname, phone, email, role, permissions, created_at, is_active";
 
 function toPublicUser(row) {
   if (!row) return null;
@@ -17,6 +18,7 @@ function toPublicUser(row) {
     phone: row.phone,
     email: row.email,
     role: row.role,
+    permissions: normalizePermissions(row.permissions),
     created_at: row.created_at,
   };
 }
@@ -31,7 +33,7 @@ function signToken(user) {
 
 async function findByPhone(phone) {
   const result = await query(
-    `SELECT id, name, lname, phone, email, password_hash, role, created_at, is_active
+    `SELECT id, name, lname, phone, email, password_hash, role, permissions, created_at, is_active
      FROM users WHERE phone = $1`,
     [phone]
   );
@@ -76,8 +78,8 @@ async function createAdminUser(raw = {}) {
   try {
     const passwordHash = await bcrypt.hash(password, 10);
     const result = await query(
-      `INSERT INTO users (name, lname, phone, email, password_hash, role, is_active)
-       VALUES ($1, $2, $3, $4, $5, 'admin', TRUE)
+      `INSERT INTO users (name, lname, phone, email, password_hash, role, permissions, is_active)
+       VALUES ($1, $2, $3, $4, $5, 'staff', '[]'::jsonb, TRUE)
        RETURNING ${SAFE_COLUMNS}`,
       [name, lname, phone, email, passwordHash]
     );
@@ -197,7 +199,7 @@ async function updateUser(id, payload = {}, actor = null) {
     throw error;
   }
 
-  const { name, lname, phone, email, password, role, current_password: currentPassword } = payload;
+  const { name, lname, phone, email, password, role, permissions, current_password: currentPassword } = payload;
 
   if (actor?.id === id) {
     if (phone !== undefined || email !== undefined) {
@@ -206,7 +208,7 @@ async function updateUser(id, payload = {}, actor = null) {
       error.code = "IDENTITY_VERIFICATION_REQUIRED";
       throw error;
     }
-    if (role !== undefined) {
+    if (role !== undefined || permissions !== undefined) {
       const error = new Error("تغییر نقش کاربری مجاز نیست");
       error.status = 403;
       error.code = "FORBIDDEN";
@@ -287,13 +289,49 @@ async function updateUser(id, payload = {}, actor = null) {
   }
   if (role !== undefined) {
     const normalized = role === null ? null : String(role).trim().toLowerCase();
-    if (normalized !== null && normalized !== "admin" && normalized !== "user") {
+    if (normalized !== null && !["admin", "staff", "user"].includes(normalized)) {
       const error = new Error("نقش باید ادمین یا بدون نقش باشد");
+      error.status = 400;
+      throw error;
+    }
+    if (current.role === "admin" && normalized !== "admin") {
+      const others = await query(
+        `SELECT COUNT(*)::int AS count FROM users
+         WHERE is_active = TRUE AND lower(btrim(role::text)) = 'admin' AND id <> $1`,
+        [id],
+      );
+      if (others.rows[0]?.count < 1) {
+        const error = new Error("آخرین مدیرکل را نمی‌توان تنزل نقش داد");
+        error.status = 409;
+        throw error;
+      }
+    }
+    if ((normalized === null || normalized === "user") && Array.isArray(permissions) && permissions.length) {
+      const error = new Error("برای ثبت دسترسی مدیریتی، نقش کاربر پنل را انتخاب کنید");
       error.status = 400;
       throw error;
     }
     fields.push(`role = $${i++}`);
     values.push(normalized === "user" ? null : normalized);
+    if ((normalized === null || normalized === "user") && permissions === undefined) {
+      fields.push(`permissions = $${i++}::jsonb`);
+      values.push("[]");
+    }
+  }
+  if (permissions !== undefined) {
+    if (!Array.isArray(permissions) || permissions.some((permission) => !PANEL_PERMISSIONS.includes(permission))) {
+      const error = new Error("فهرست دسترسی‌ها معتبر نیست");
+      error.status = 400;
+      error.code = "INVALID_PERMISSIONS";
+      throw error;
+    }
+    const normalizedPermissions = normalizePermissions(permissions);
+    if (current.role !== "admin" && role === undefined) {
+      fields.push(`role = $${i++}`);
+      values.push(normalizedPermissions.length ? "staff" : null);
+    }
+    fields.push(`permissions = $${i++}::jsonb`);
+    values.push(JSON.stringify(normalizedPermissions));
   }
 
   if (fields.length === 0) {
@@ -313,18 +351,32 @@ async function updateUser(id, payload = {}, actor = null) {
   return toPublicUser(result.rows[0]);
 }
 
-async function deactivateAdminUser(id) {
+async function deactivateUser(id) {
   const result = await query(
     `UPDATE users
-     SET is_active = FALSE, role = NULL
-     WHERE id = $1 AND is_active = TRUE AND lower(btrim(role::text)) = 'admin'
+     SET is_active = FALSE, role = NULL, permissions = '[]'::jsonb
+     WHERE id = $1 AND is_active = TRUE
+       AND (
+         lower(btrim(COALESCE(role::text, ''))) <> 'admin'
+         OR EXISTS (
+           SELECT 1 FROM users AS another_admin
+           WHERE another_admin.is_active = TRUE
+             AND lower(btrim(another_admin.role::text)) = 'admin'
+             AND another_admin.id <> users.id
+         )
+       )
      RETURNING ${SAFE_COLUMNS}`,
     [id]
   );
 
   if (!result.rows[0]) {
-    const error = new Error("کاربر مدیریتی پیدا نشد");
-    error.status = 404;
+    const target = await findById(id);
+    const error = new Error(
+      target?.is_active && String(target.role || "").trim().toLowerCase() === "admin"
+        ? "آخرین مدیر فعال را نمی‌توان حذف کرد"
+        : "کاربر پیدا نشد",
+    );
+    error.status = target?.is_active ? 409 : 404;
     throw error;
   }
 
@@ -337,7 +389,7 @@ module.exports = {
   createAdminUser,
   login,
   updateUser,
-  deactivateAdminUser,
+  deactivateUser,
   findById,
   listUsers,
   toPublicUser,

@@ -6,6 +6,10 @@ async function ensureCustomerRoles() {
       ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE
   `);
   await query(`
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '[]'::jsonb
+  `);
+  await query(`
     UPDATE users SET is_active = TRUE WHERE is_active IS NULL
   `);
   await query(`

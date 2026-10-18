@@ -1,7 +1,8 @@
 const express=require('express');const {query}=require('../db');const {authenticate}=require('../middleware/auth');
 const {schedule,validate}=require('../services/occasion-calendar');
+const {requirePermission}=require('../lib/panel-permissions');
 const router=express.Router();
-const admin=(req,res,next)=>req.user.role==='admin'?next():res.status(403).json({message:'فقط مدیر مجاز است'});
+const admin=requirePermission('calendar.manage');
 const wrap=fn=>async(req,res)=>{try{await fn(req,res);}catch(e){res.status(e.status||500).json({message:e.status?e.message:'دریافت یا ذخیرهٔ مناسبت ناموفق بود',code:e.code});}};
 router.get('/',wrap(async(req,res)=>{
  const rows=(await query('SELECT * FROM occasion_calendar WHERE is_active=TRUE ORDER BY priority DESC, title')).rows;

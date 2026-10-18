@@ -77,6 +77,7 @@ router.put("/:id", authenticate, async (req, res) => {
     // Only admins may change roles (prevents self-escalation).
     if (req.user.role !== "admin") {
       delete payload.role;
+      delete payload.permissions;
     }
 
     const user = await usersService.updateUser(req.params.id, payload, req.user);
@@ -102,12 +103,8 @@ router.delete("/:id", authenticate, async (req, res) => {
     if (!target || target.is_active === false) {
       return res.status(404).json({ message: "کاربر پیدا نشد" });
     }
-    if (String(target.role || "").trim().toLowerCase() !== "admin") {
-      return res.status(409).json({ message: "حذف مشتری از این بخش مجاز نیست", code: "CUSTOMER_DELETE_BLOCKED" });
-    }
-
-    const user = await usersService.deactivateAdminUser(req.params.id);
-    res.json({ message: "کاربر مدیریتی غیرفعال شد", user });
+    const user = await usersService.deactivateUser(req.params.id);
+    res.json({ message: "حساب کاربری غیرفعال شد؛ اطلاعات سفارش‌ها حفظ شدند", user });
   } catch (err) {
     res.status(err.status || 500).json({
       message: err.message || "Delete failed",

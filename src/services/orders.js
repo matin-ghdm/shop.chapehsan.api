@@ -1,4 +1,5 @@
 const { pool, query } = require("../db");
+const { hasPermission } = require("../lib/panel-permissions");
 
 const ORDER_STATUSES = [
   "pending",
@@ -508,7 +509,7 @@ async function createOrder(payload, currentUser) {
     throw httpError("total_price معتبر نیست", 400, "VALIDATION_ERROR");
   }
 
-  const status = currentUser.role === "admin" && payload.status
+  const status = hasPermission(currentUser, "orders.manage") && payload.status
     ? payload.status
     : "awaiting_payment";
   if (!ORDER_STATUSES.includes(status)) {
@@ -818,7 +819,7 @@ function assertOrderAccess(order, currentUser) {
   if (!order) {
     throw httpError("سفارش پیدا نشد", 404, "NOT_FOUND");
   }
-  if (currentUser.role !== "admin" && order.user_id !== currentUser.id) {
+  if (!hasPermission(currentUser, "orders.view") && order.user_id !== currentUser.id) {
     throw httpError("دسترسی غیرمجاز", 403, "FORBIDDEN");
   }
 }

@@ -3,21 +3,19 @@ const { query } = require("../db");
 const { notifyLaserRequest } = require("../services/telegram-bot");
 const { parseRequestAttachments } = require("../lib/request-attachments");
 const { authenticate } = require("../middleware/auth");
+const { requirePermission } = require("../lib/panel-permissions");
 
 const router = express.Router();
 const VALID_SERVICES = new Set(["fiber", "co2"]);
 const VALID_MATERIAL_OWNERS = new Set(["customer", "business", "unsure"]);
 
-function requireAdmin(req, res, next) {
-  if (req.user?.role !== "admin") return res.status(403).json({ message: "دسترسی غیرمجاز" });
-  next();
-}
+const requireRequestsAccess = requirePermission("requests.manage");
 
 function clean(value, max = 1000) {
   return String(value ?? "").trim().slice(0, max);
 }
 
-router.get("/admin/all", authenticate, requireAdmin, async (_req, res) => {
+router.get("/admin/all", authenticate, requireRequestsAccess, async (_req, res) => {
   try {
     const result = await query(
       `SELECT id, service, customer_name, phone, material, item_description, quantity,

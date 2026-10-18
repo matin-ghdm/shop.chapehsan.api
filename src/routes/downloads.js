@@ -1,19 +1,12 @@
 const express = require("express");
 const downloadsService = require("../services/downloads");
 const { authenticate } = require("../middleware/auth");
+const { hasPermission, requirePermission } = require("../lib/panel-permissions");
 
 const purchases = require("../services/download-purchases");
 const router = express.Router();
 
-function requireAdmin(req, res, next) {
-  if (req.user.role !== "admin") {
-    return res.status(403).json({
-      message: "فقط ادمین مجاز است",
-      code: "FORBIDDEN",
-    });
-  }
-  next();
-}
+const requireDownloadsAccess = requirePermission("downloads.manage");
 
 function optionalAuth(req, _res, next) {
   const header = req.headers.authorization;
@@ -28,14 +21,14 @@ router.get("/", optionalAuth, async (req, res) => {
   try {
     const downloads = await downloadsService.listDownloads({
       type: req.query.type || null,
-      includeInactive: req.user?.role === "admin",
+      includeInactive: hasPermission(req.user, "downloads.manage"),
     });
 
     const isLoggedIn = Boolean(req.user);
     res.json({
       downloads: downloads.map((row) =>
         downloadsService.toPublicDownload(row, {
-          hideFilePath: req.user?.role !== "admin" && (row.is_paid || (row.requires_login && !isLoggedIn)),
+          hideFilePath: !hasPermission(req.user, "downloads.manage") && (row.is_paid || (row.requires_login && !isLoggedIn)),
         })
       ),
     });
@@ -60,7 +53,7 @@ router.get("/:id", optionalAuth, async (req, res) => {
       return res.status(404).json({ message: "دانلود پیدا نشد", code: "NOT_FOUND" });
     }
 
-    if (!download.is_active && req.user?.role !== "admin") return res.status(404).json({ message: "فایل در دسترس نیست" });
+    if (!download.is_active && !hasPermission(req.user, "downloads.manage")) return res.status(404).json({ message: "فایل در دسترس نیست" });
     if (download.requires_login && !req.user) {
       return res.status(401).json({
         message: "برای دسترسی به این فایل باید وارد شوید",
@@ -68,7 +61,8 @@ router.get("/:id", optionalAuth, async (req, res) => {
       });
     }
 
-    res.json({ download: downloadsService.toPublicDownload(download, {hideFilePath: download.is_paid && req.user?.role !== "admin", includeSource:req.user?.role === "admin"}) });
+    const canManageDownloads = hasPermission(req.user, "downloads.manage");
+    res.json({ download: downloadsService.toPublicDownload(download, {hideFilePath: download.is_paid && !canManageDownloads, includeSource: canManageDownloads}) });
   } catch (err) {
     res.status(err.status || 500).json({
       message: err.message || "خطا در دریافت دانلود",
@@ -80,7 +74,7 @@ router.get("/:id", optionalAuth, async (req, res) => {
 router.post("/:id/access", optionalAuth, async (req, res) => {
   try {
     const item = await downloadsService.findById(req.params.id);
-    if (!item || (!item.is_active && req.user?.role !== "admin")) return res.status(404).json({message:"فایل در دسترس نیست"});
+    if (!item || (!item.is_active && !hasPermission(req.user, "downloads.manage"))) return res.status(404).json({message:"فایل در دسترس نیست"});
     if ((item.requires_login || item.is_paid) && !req.user) return res.status(401).json({message:"برای دانلود وارد حساب شوید"});
     if (item.is_paid && req.user?.role !== 'admin' && !(await purchases.owns(req.user.id,item.id))) return res.status(402).json({message:'برای دریافت فایل ابتدا خرید را کامل کنید'});
     if (item.is_paid && !item.file_key) return res.status(503).json({message:'فایل برای دریافت آماده نیست'});
@@ -89,7 +83,7 @@ router.post("/:id/access", optionalAuth, async (req, res) => {
   } catch (error) { res.status(error.status || 500).json({message:"دریافت فایل ناموفق بود"}); }
 });
 
-router.post("/", authenticate, requireAdmin, async (req, res) => {
+router.post("/", authenticate, requireDownloadsAccess, async (req, res) => {
   try {
     const download = await downloadsService.createDownload(req.body);
     res.status(201).json({ download });
@@ -101,7 +95,7 @@ router.post("/", authenticate, requireAdmin, async (req, res) => {
   }
 });
 
-router.put("/:id", authenticate, requireAdmin, async (req, res) => {
+router.put("/:id", authenticate, requireDownloadsAccess, async (req, res) => {
   try {
     const download = await downloadsService.updateDownload(req.params.id, req.body);
     res.json({ download });
@@ -113,7 +107,7 @@ router.put("/:id", authenticate, requireAdmin, async (req, res) => {
   }
 });
 
-router.delete("/:id", authenticate, requireAdmin, async (req, res) => {
+router.delete("/:id", authenticate, requireDownloadsAccess, async (req, res) => {
   try {
     const download = await downloadsService.deleteDownload(req.params.id);
     res.json({ message: "دانلود حذف شد", download });

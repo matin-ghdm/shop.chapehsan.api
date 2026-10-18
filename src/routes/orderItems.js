@@ -2,6 +2,7 @@ const express = require("express");
 const orderItemsService = require("../services/orderItems");
 const ordersService = require("../services/orders");
 const { authenticate } = require("../middleware/auth");
+const { hasPermission } = require("../lib/panel-permissions");
 
 const router = express.Router();
 
@@ -16,7 +17,7 @@ router.get("/", async (req, res) => {
       return res.json({ items });
     }
 
-    if (req.user.role !== "admin") {
+    if (!hasPermission(req.user, "orders.view")) {
       return res.status(403).json({
         message: "برای لیست همه آیتم‌ها نقش ادمین لازم است یا order_id بفرستید",
         code: "FORBIDDEN",
@@ -52,6 +53,9 @@ router.get("/:id", async (req, res) => {
 
 router.post("/", async (req, res) => {
   try {
+    if (!hasPermission(req.user, "orders.manage")) {
+      return res.status(403).json({ message: "تغییر اقلام سفارش فقط برای کاربر دارای دسترسی مدیریت سفارش مجاز است", code: "FORBIDDEN" });
+    }
     const item = await orderItemsService.createItem(req.body, req.user);
     res.status(201).json({ item });
   } catch (err) {
@@ -64,6 +68,9 @@ router.post("/", async (req, res) => {
 
 router.put("/:id", async (req, res) => {
   try {
+    if (!hasPermission(req.user, "orders.manage")) {
+      return res.status(403).json({ message: "تغییر اقلام سفارش فقط برای کاربر دارای دسترسی مدیریت سفارش مجاز است", code: "FORBIDDEN" });
+    }
     const item = await orderItemsService.updateItem(req.params.id, req.body, req.user);
     res.json({ item });
   } catch (err) {
@@ -76,6 +83,9 @@ router.put("/:id", async (req, res) => {
 
 router.delete("/:id", async (req, res) => {
   try {
+    if (!hasPermission(req.user, "orders.manage")) {
+      return res.status(403).json({ message: "تغییر اقلام سفارش فقط برای کاربر دارای دسترسی مدیریت سفارش مجاز است", code: "FORBIDDEN" });
+    }
     const item = await orderItemsService.deleteItem(req.params.id, req.user);
     res.json({ message: "آیتم حذف شد", item });
   } catch (err) {

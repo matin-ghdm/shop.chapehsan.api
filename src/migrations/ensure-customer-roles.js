@@ -1,6 +1,21 @@
 const { query } = require("../db");
 
 async function ensureCustomerRoles() {
+  const roleEnum = await query(`
+    SELECT t.typname, n.nspname
+    FROM pg_attribute a
+    JOIN pg_type t ON t.oid = a.atttypid
+    JOIN pg_namespace n ON n.oid = t.typnamespace
+    WHERE a.attrelid = 'users'::regclass
+      AND a.attname = 'role'
+      AND t.typtype = 'e'
+  `);
+  if (roleEnum.rows[0]) {
+    const { typname, nspname } = roleEnum.rows[0];
+    const quote = (value) => `"${value.replace(/"/g, '""')}"`;
+    await query(`ALTER TYPE ${quote(nspname)}.${quote(typname)} ADD VALUE IF NOT EXISTS 'staff'`);
+  }
+
   await query(`
     ALTER TABLE users
       ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE

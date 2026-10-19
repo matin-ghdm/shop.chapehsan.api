@@ -13,7 +13,7 @@ const ORDER_STATUSES = [
 ];
 
 const ORDER_COLUMNS =
-  "id, user_id, address_id, is_pickup, status, total_price, subtotal_price, discount_code, discount_amount, shipping_fee, delivery_date, delivery_time, next_business_day_confirmed, wallet_amount, amount_before_wallet, note, created_at, payment_track_id, payment_ref_number, payment_card_number, paid_at, invoice_type, invoice_name, invoice_national_id, invoice_economic_code, invoice_registration_number, invoice_phone, invoice_address, invoice_postal_code, invoice_issued_at";
+  "id, user_id, address_id, is_pickup, status, total_price, subtotal_price, discount_code, discount_amount, shipping_fee, rush_order, rush_fee, delivery_date, delivery_time, next_business_day_confirmed, wallet_amount, amount_before_wallet, note, created_at, payment_track_id, payment_ref_number, payment_card_number, paid_at, invoice_type, invoice_name, invoice_national_id, invoice_economic_code, invoice_registration_number, invoice_phone, invoice_address, invoice_postal_code, invoice_issued_at";
 
 const INVOICE_FIELDS = [
   "invoice_type",
@@ -190,7 +190,7 @@ async function attachItemsToOrders(orders) {
 
 async function findById(id) {
   const result = await query(
-    `SELECT ${ORDER_COLUMNS_ALIASED}, ${ORDER_USER_FIELDS}, ${ORDER_ADDRESS_FIELDS}
+    `SELECT ${ORDER_COLUMNS_ALIASED}, ${ORDER_USER_FIELDS}, ${ORDER_ADDRESS_FIELDS}, ${ORDER_QUEUE_POSITION_SQL}
      ${ORDER_FROM_WITH_USER}
      WHERE o.id = $1`,
     [id]
@@ -221,6 +221,24 @@ const ORDER_ADDRESS_FIELDS = `
   a.address AS delivery_address,
   a.postal_code AS address_postal_code,
   a.phone AS address_phone`;
+
+const ORDER_QUEUE_POSITION_SQL = `CASE
+  WHEN o.status IN ('paid', 'confirmed') AND EXISTS (
+    SELECT 1 FROM order_items oi
+    WHERE oi.order_id = o.id
+      AND COALESCE(oi.custom_data->>'design_type', oi.custom_data->>'type') IN
+        ('taslit', 'taslit-banner', 'stand', 'stand-banner', 'hajj', 'hajj-banner', 'karbala', 'karbala-banner', 'occasion', 'occasion-banner')
+  ) THEN (
+    SELECT COUNT(*)::int FROM orders q
+    WHERE q.status IN ('paid', 'confirmed')
+      AND EXISTS (
+        SELECT 1 FROM order_items qi
+        WHERE qi.order_id = q.id
+          AND COALESCE(qi.custom_data->>'design_type', qi.custom_data->>'type') IN
+            ('taslit', 'taslit-banner', 'stand', 'stand-banner', 'hajj', 'hajj-banner', 'karbala', 'karbala-banner', 'occasion', 'occasion-banner')
+      )
+      AND (q.rush_order > o.rush_order OR (q.rush_order = o.rush_order AND (q.created_at < o.created_at OR (q.created_at = o.created_at AND q.id <= o.id))))
+  ) ELSE NULL END AS queue_position`;
 
 const ORDER_FROM_WITH_USER =
   "FROM orders o LEFT JOIN users u ON u.id = o.user_id LEFT JOIN addresses a ON a.id = o.address_id";
@@ -326,7 +344,7 @@ async function listOrders({
     const offset = (safePage - 1) * safeLimit;
 
     const result = await query(
-      `SELECT ${ORDER_COLUMNS_ALIASED}, ${ORDER_USER_FIELDS}, ${ORDER_ADDRESS_FIELDS}
+      `SELECT ${ORDER_COLUMNS_ALIASED}, ${ORDER_USER_FIELDS}, ${ORDER_ADDRESS_FIELDS}, ${ORDER_QUEUE_POSITION_SQL}
        ${ORDER_FROM_WITH_USER}
        ${where}
        ORDER BY o.created_at DESC
@@ -346,7 +364,7 @@ async function listOrders({
   }
 
   const result = await query(
-    `SELECT ${ORDER_COLUMNS_ALIASED}, ${ORDER_USER_FIELDS}, ${ORDER_ADDRESS_FIELDS}
+    `SELECT ${ORDER_COLUMNS_ALIASED}, ${ORDER_USER_FIELDS}, ${ORDER_ADDRESS_FIELDS}, ${ORDER_QUEUE_POSITION_SQL}
      ${ORDER_FROM_WITH_USER}
      ${where}
      ORDER BY o.created_at DESC`,
@@ -556,20 +574,33 @@ async function createOrder(payload, currentUser) {
       items.length > 0 ? await insertItems(client, order.id, items) : [];
     let finalOrder = order;
     let amountBeforeWallet = totalPrice;
-    if (couponCode) {
+    if (insertedItems.length > 0) {
       const subtotal = calcTotalFromItems(insertedItems);
-      if (!Number.isSafeInteger(subtotal) || subtotal < 1) throw httpError("جمع محصولات برای تخفیف معتبر نیست", 400, "VALIDATION_ERROR");
-      const discount = await require("./discount-codes").calculateDiscount(couponCode, subtotal, client, insertedItems);
-      const finalTotal = subtotal - discount.discount_amount + shippingFee;
+      if (!Number.isSafeInteger(subtotal) || subtotal < 1) throw httpError("جمع محصولات سفارش معتبر نیست", 400, "VALIDATION_ERROR");
+      const bannerTypes = new Set(["taslit", "taslit-banner", "stand", "stand-banner", "hajj", "hajj-banner", "karbala", "karbala-banner", "occasion", "occasion-banner"]);
+      const containsBanner = insertedItems.some((item) => bannerTypes.has(String(item.custom_data?.design_type || item.custom_data?.type || "").toLowerCase()));
+      const rushOrder = payload.rush_order === true;
+      if (rushOrder && !containsBanner) throw httpError("سفارش فوری فقط برای سفارش‌های دارای بنر قابل انتخاب است", 400, "RUSH_REQUIRES_BANNER");
+      const { getOrderScheduleSettings } = require("./order-schedule");
+      const scheduleSettings = await getOrderScheduleSettings();
+      const rushFee = rushOrder ? scheduleSettings.urgentOrderFee : 0;
+      let discountCode = null;
+      let discountAmount = 0;
+      if (couponCode) {
+        const discount = await require("./discount-codes").calculateDiscount(couponCode, subtotal, client, insertedItems);
+        discountCode = discount.code;
+        discountAmount = discount.discount_amount;
+      }
+      const finalTotal = subtotal - discountAmount + shippingFee + rushFee;
+      if (!Number.isSafeInteger(finalTotal) || finalTotal < 0) throw httpError("مبلغ نهایی سفارش معتبر نیست", 400, "VALIDATION_ERROR");
       const updated = await client.query(
-        `UPDATE orders SET total_price=$1, subtotal_price=$2, discount_code=$3, discount_amount=$4, shipping_fee=$5 WHERE id=$6 RETURNING ${ORDER_COLUMNS}`,
-        [finalTotal, subtotal, discount.code, discount.discount_amount, shippingFee, order.id]
+        `UPDATE orders SET total_price=$1, subtotal_price=$2, discount_code=$3, discount_amount=$4, shipping_fee=$5, rush_order=$6, rush_fee=$7 WHERE id=$8 RETURNING ${ORDER_COLUMNS}`,
+        [finalTotal, subtotal, discountCode, discountAmount, shippingFee, rushOrder, rushFee, order.id]
       );
       finalOrder = updated.rows[0];
       amountBeforeWallet = finalTotal;
-    }
-    if (!couponCode && insertedItems.length > 0 && totalPrice < calcTotalFromItems(insertedItems)) {
-      throw httpError("مبلغ سفارش کمتر از جمع قیمت محصولات است", 400, "VALIDATION_ERROR");
+    } else if (payload.rush_order === true) {
+      throw httpError("سفارش فوری فقط برای سفارش‌های دارای بنر قابل انتخاب است", 400, "RUSH_REQUIRES_BANNER");
     }
 
     const walletService = require("./wallet");

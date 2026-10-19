@@ -180,6 +180,9 @@ const options = {
               ],
             },
             total_price: { type: "integer", example: 500000 },
+            rush_order: { type: "boolean", description: "Prioritize a banner order in the production queue" },
+            rush_fee: { type: "integer", description: "Server-calculated rush-order fee in Toman" },
+            queue_position: { type: "integer", nullable: true, description: "Current banner production queue position" },
             note: { type: "string", nullable: true },
             created_at: { type: "string", format: "date-time" },
             items: {
@@ -1259,6 +1262,7 @@ const options = {
                     is_pickup: { type: "boolean", example: true },
                     status: { type: "string", example: "awaiting_payment" },
                     total_price: { type: "integer", example: 500000 },
+                    rush_order: { type: "boolean", description: "Request priority production for orders containing a banner" },
                     note: { type: "string" },
                     user_id: { type: "string", format: "uuid", description: "Admin only" },
                     items: {

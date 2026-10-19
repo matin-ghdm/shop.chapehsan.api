@@ -6,6 +6,7 @@ const DEFAULT_ORDER_SCHEDULE = Object.freeze({
   orderCutoffTime: "19:00",
   deliveryStartTime: "09:00",
   deliveryEndTime: "20:30",
+  urgentOrderFee: 200000,
 });
 
 function normalizeOrderSchedule(value) {
@@ -18,6 +19,9 @@ function normalizeOrderSchedule(value) {
     orderCutoffTime: String(source.orderCutoffTime || DEFAULT_ORDER_SCHEDULE.orderCutoffTime),
     deliveryStartTime: String(source.deliveryStartTime || DEFAULT_ORDER_SCHEDULE.deliveryStartTime),
     deliveryEndTime: String(source.deliveryEndTime || DEFAULT_ORDER_SCHEDULE.deliveryEndTime),
+    urgentOrderFee: Number.isSafeInteger(Number(source.urgentOrderFee)) && Number(source.urgentOrderFee) >= 0 && Number(source.urgentOrderFee) <= 50000000
+      ? Number(source.urgentOrderFee)
+      : DEFAULT_ORDER_SCHEDULE.urgentOrderFee,
   };
 }
 

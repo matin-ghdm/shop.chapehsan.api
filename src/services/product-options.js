@@ -54,7 +54,7 @@ function normalizeProductOptions(input) {
     if (fieldIds.has(id)) throw invalid("شناسه مشخصه تکراری است");
     fieldIds.add(id);
     const kind = field.kind;
-    if (!["text", "number", "select", "color"].includes(kind)) throw invalid("نوع ورودی محصول معتبر نیست");
+    if (!["text", "textarea", "number", "select", "color", "date", "datetime"].includes(kind)) throw invalid("نوع ورودی محصول معتبر نیست");
     let options = [];
     if (["select", "color"].includes(kind)) {
       if (!Array.isArray(field.options) || field.options.length < 1 || field.options.length > 30) throw invalid("گزینه‌های فهرست و رنگ را وارد کنید");
@@ -72,12 +72,22 @@ function normalizeProductOptions(input) {
     extraIds.add(id);
     return { id, name: text(extra.name), price: amount(extra.price) };
   });
+  const rawSettings = input.order_settings;
+  if (rawSettings !== undefined && (!rawSettings || typeof rawSettings !== "object" || Array.isArray(rawSettings))) throw invalid("تنظیمات فرم سفارش معتبر نیست");
+  const pricingMode = rawSettings?.pricing_mode;
+  if (pricingMode !== undefined && !["fixed", "variant", "area", "quantity", "extras", "quote"].includes(pricingMode)) throw invalid("روش قیمت‌گذاری محصول معتبر نیست");
+  const minimumQuantity = rawSettings?.minimum_quantity === undefined ? undefined : Number(rawSettings.minimum_quantity);
+  if (minimumQuantity !== undefined && (!Number.isSafeInteger(minimumQuantity) || minimumQuantity < 1 || minimumQuantity > 100000)) throw invalid("حداقل تعداد سفارش معتبر نیست");
+  const order_settings = {
+    ...(pricingMode ? { pricing_mode: pricingMode } : {}),
+    ...(minimumQuantity !== undefined ? { minimum_quantity: minimumQuantity } : {}),
+  };
   if (input.specifications !== undefined && (!Array.isArray(input.specifications) || input.specifications.length > 30)) throw invalid("حداکثر ۳۰ مشخصه برای هر کالا مجاز است");
   const specifications = input.specifications?.map(row => {
     if (!row || typeof row !== "object") throw invalid("مشخصات کالا معتبر نیست");
     return { label: text(row.label, 80), value: text(row.value, 1000) };
   });
-  return { variants, fields, extras, ...(specifications !== undefined ? { specifications } : {}) };
+  return { variants, fields, extras, ...(Object.keys(order_settings).length ? { order_settings } : {}), ...(specifications !== undefined ? { specifications } : {}) };
 }
 function quoteProduct(design, selection, productQuantity = 1) {
   function selectedExtras(configured, ids) {
@@ -92,6 +102,8 @@ function quoteProduct(design, selection, productQuantity = 1) {
     });
   }
   const options = normalizeProductOptions(design.product_options);
+  const minimumQuantity = options.order_settings?.minimum_quantity || 1;
+  if (!Number.isSafeInteger(productQuantity) || productQuantity < minimumQuantity) throw invalid(`حداقل تعداد سفارش این محصول ${minimumQuantity} عدد است`);
   const variants = options.variants;
   if (!variants.length) {
     if (selection?.variant_id || selection?.custom_size) throw invalid("این محصول نوع یا اندازهٔ سفارشی ندارد");

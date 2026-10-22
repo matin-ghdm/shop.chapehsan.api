@@ -475,7 +475,7 @@ async function insertItems(client, orderId, items) {
     const configurableOrderTypes = ["taslit", "stand", "hamdardi", "hajj", "karbala", "davati"];
     const configuredOptions = design?.product_options;
     if (configurableOrderTypes.includes(design?.type) &&
-        ((configuredOptions?.fields?.length || 0) > 0 || (configuredOptions?.extras?.length || 0) > 0 || customData.productSelection)) {
+        ((configuredOptions?.fields?.length || 0) > 0 || (configuredOptions?.extras?.length || 0) > 0 || configuredOptions?.order_settings?.minimum_quantity || customData.productSelection)) {
       if (!design.is_active) throw httpError("این محصول غیرفعال است", 400, "VALIDATION_ERROR");
       const quote = require("./product-options").quoteProduct(design, customData.productSelection, quantity);
       if (unitPrice !== quote.price && unitPrice !== quote.legacyPrice) {

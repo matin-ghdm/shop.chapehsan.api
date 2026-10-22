@@ -97,7 +97,18 @@ function validateLinks(payload) {
 }
 function validateRelatedProductPath(payload) {
   if (payload.related_product_path == null || payload.related_product_path === "") return;
-  const value = String(payload.related_product_path).trim();
+  let value = String(payload.related_product_path).trim();
+  if (/^https:\/\//i.test(value)) {
+    try {
+      const url = new URL(value);
+      if (url.protocol !== "https:" || !["www.chapehsan.com", "chapehsan.com"].includes(url.hostname) || url.port || url.username || url.password) {
+        throw new Error("invalid product URL");
+      }
+      value = `${url.pathname}${url.search}${url.hash}`;
+    } catch {
+      throw httpError("لینک محصول مرتبط باید از دامنهٔ سایت چاپ احسان باشد");
+    }
+  }
   if (value.length > 500 || !/^\/(?![\/\\])\S+$/.test(value)) {
     throw httpError("مسیر محصول مرتبط باید یک آدرس داخلی معتبر باشد");
   }

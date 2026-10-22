@@ -17,6 +17,9 @@ async function ensureServiceRequests() {
     )
   `);
   await query(`ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'::jsonb`);
+  await query(`ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS product_code TEXT`);
+  await query(`ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS product_title TEXT`);
+  await query(`ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS product_selection JSONB`);
   await query(`CREATE INDEX IF NOT EXISTS service_requests_created_idx ON service_requests (created_at DESC)`);
 }
 

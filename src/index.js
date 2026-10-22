@@ -30,6 +30,7 @@ app.use("/designs", require("./routes/designs"));
 app.use("/occasion-calendar", require("./routes/occasion-calendar"));
 app.use("/favorites", require("./routes/favorites"));
 app.use("/admin", require("./routes/admin"));
+app.use("/site-analytics", require("./routes/site-analytics"));
 app.use("/reviews", require("./routes/reviews"));
 app.use("/payments", require("./routes/payments"));
 app.use("/discount-codes", require("./routes/discount-codes"));
@@ -176,6 +177,7 @@ async function startServer() {
   await require("./migrations/ensure-laser-requests").ensureLaserRequests();
   await require("./migrations/ensure-service-requests").ensureServiceRequests();
   await require("./migrations/ensure-customer-roles").ensureCustomerRoles();
+  await require("./migrations/ensure-site-analytics").ensureSiteAnalytics();
   await require("./migrations/ensure-order-delivery-schedule").ensureOrderDeliverySchedule();
   await require("./migrations/ensure-order-schedule-settings").ensureOrderScheduleSettings();
   await require("./migrations/ensure-order-invoices").ensureOrderInvoiceColumns();

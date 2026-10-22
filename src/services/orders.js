@@ -472,6 +472,18 @@ async function insertItems(client, orderId, items) {
         productSelection: quote.selection,
       };
     }
+    const configurableOrderTypes = ["taslit", "stand", "hamdardi", "hajj", "karbala", "davati"];
+    const configuredOptions = design?.product_options;
+    if (configurableOrderTypes.includes(design?.type) &&
+        ((configuredOptions?.fields?.length || 0) > 0 || (configuredOptions?.extras?.length || 0) > 0 || customData.productSelection)) {
+      if (!design.is_active) throw httpError("این محصول غیرفعال است", 400, "VALIDATION_ERROR");
+      const quote = require("./product-options").quoteProduct(design, customData.productSelection, quantity);
+      if (unitPrice !== quote.price && unitPrice !== quote.legacyPrice) {
+        throw httpError("قیمت محصول تغییر کرده است؛ محصول را دوباره به سبد اضافه کنید", 409, "PRICE_CHANGED");
+      }
+      unitPrice = quote.price;
+      customData = { ...customData, productSelection: quote.selection };
+    }
     if (!Number.isInteger(quantity) || quantity <= 0) {
       throw httpError("quantity باید عدد صحیح بزرگ‌تر از صفر باشد", 400, "VALIDATION_ERROR");
     }

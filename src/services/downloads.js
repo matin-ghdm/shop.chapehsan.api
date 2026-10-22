@@ -3,7 +3,7 @@ const { query } = require("../db");
 const DOWNLOAD_TYPES = ["layer", "pdf", "image", "banner", "tasliat", "map", "other"];
 
 const DOWNLOAD_COLUMNS =
-  "id, name, description, type, file_path, format, is_protected, uploaded_at, is_active, requires_login, archive_password, preview_path, size_bytes, download_count, updated_at, dimensions, software, usage_guide, usage_terms, is_paid, price, file_key, file_source";
+  "id, name, description, type, file_path, format, is_protected, uploaded_at, is_active, requires_login, archive_password, preview_path, size_bytes, download_count, updated_at, dimensions, software, usage_guide, usage_terms, related_product_path, is_paid, price, file_key, file_source";
 
 function httpError(message, status = 400, code = "BAD_REQUEST") {
   const error = new Error(message);
@@ -25,6 +25,7 @@ function toPublicDownload(row, { hideFilePath = false, includeSource = false } =
     is_active: row.is_active, requires_login: row.requires_login, archive_password: row.archive_password,
     preview_path: row.preview_path, size_bytes: row.size_bytes, download_count: Number(row.download_count), updated_at: row.updated_at,
     dimensions: row.dimensions, software: row.software, usage_guide: row.usage_guide, usage_terms: row.usage_terms,
+    related_product_path: row.related_product_path,
   };
   if (!hideFilePath) {
     item.file_path = row.file_path;
@@ -94,9 +95,17 @@ function validateLinks(payload) {
     if (!( /^https?:\/\/[^\s]+$/i.test(value) || /^\/(?![\/\\])[^\s\\]+$/.test(value) )) throw httpError("آدرس فایل یا تصویر نامعتبر است");
   }
 }
+function validateRelatedProductPath(payload) {
+  if (payload.related_product_path == null || payload.related_product_path === "") return;
+  const value = String(payload.related_product_path).trim();
+  if (value.length > 500 || !/^\/(?![\/\\])\S+$/.test(value)) {
+    throw httpError("مسیر محصول مرتبط باید یک آدرس داخلی معتبر باشد");
+  }
+  payload.related_product_path = value;
+}
 
 async function createDownload(payload) {
-  validateLinks(payload);
+  validateLinks(payload); validateRelatedProductPath(payload);
   if (!String(payload.name || "").trim() || !payload.type || !String(payload.file_path || "").trim()) {
     throw httpError(
       "فیلدهای name، type و file_path الزامی هستند",
@@ -114,17 +123,17 @@ async function createDownload(payload) {
 
   validateMetadata(payload); validatePricing(payload);
   const result = await query(
-    `INSERT INTO downloads (name,description,type,file_path,format,is_protected,is_active,requires_login,archive_password,preview_path,size_bytes,dimensions,software,usage_guide,usage_terms,is_paid,price,file_key,file_source)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING ${DOWNLOAD_COLUMNS}`,
+    `INSERT INTO downloads (name,description,type,file_path,format,is_protected,is_active,requires_login,archive_password,preview_path,size_bytes,dimensions,software,usage_guide,usage_terms,related_product_path,is_paid,price,file_key,file_source)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING ${DOWNLOAD_COLUMNS}`,
     [String(payload.name).trim(), payload.description || null, payload.type, String(payload.file_path).trim(), payload.format || null,
      Boolean(payload.is_protected), payload.is_active !== false, payload.requires_login === true,
-     String(payload.archive_password || "").trim() || null, String(payload.preview_path || "").trim() || null, payload.size_bytes ?? null, ...["dimensions", "software", "usage_guide", "usage_terms"].map(key => String(payload[key] || "").trim() || null), payload.is_paid === true, payload.is_paid ? Number(payload.price) : 0, payload.file_key || null, payload.file_source || null]
+     String(payload.archive_password || "").trim() || null, String(payload.preview_path || "").trim() || null, payload.size_bytes ?? null, ...["dimensions", "software", "usage_guide", "usage_terms"].map(key => String(payload[key] || "").trim() || null), payload.related_product_path || null, payload.is_paid === true, payload.is_paid ? Number(payload.price) : 0, payload.file_key || null, payload.file_source || null]
   );
   return toPublicDownload(result.rows[0]);
 }
 
 async function updateDownload(id, payload) {
-  validateLinks(payload); validateMetadata(payload);
+  validateLinks(payload); validateMetadata(payload); validateRelatedProductPath(payload);
   const current = await findById(id);
   if (!current) {
     throw httpError("دانلود پیدا نشد", 404, "NOT_FOUND");
@@ -174,7 +183,7 @@ async function updateDownload(id, payload) {
     values.push(Boolean(payload.is_protected));
   }
 
-  for (const key of ["is_active", "requires_login", "archive_password", "preview_path", "size_bytes", "dimensions", "software", "usage_guide", "usage_terms", "is_paid", "price", "file_key", "file_source"]) {
+  for (const key of ["is_active", "requires_login", "archive_password", "preview_path", "size_bytes", "dimensions", "software", "usage_guide", "usage_terms", "related_product_path", "is_paid", "price", "file_key", "file_source"]) {
     if (payload[key] === undefined) continue;
     let value = payload[key];
     if (["is_active", "requires_login", "is_paid"].includes(key)) {

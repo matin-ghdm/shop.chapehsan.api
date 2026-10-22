@@ -25,6 +25,7 @@ async function ensureDownloadManagement() {
       ADD COLUMN IF NOT EXISTS software TEXT,
       ADD COLUMN IF NOT EXISTS usage_guide TEXT,
       ADD COLUMN IF NOT EXISTS usage_terms TEXT,
+      ADD COLUMN IF NOT EXISTS related_product_path TEXT,
       ADD COLUMN IF NOT EXISTS is_paid BOOLEAN NOT NULL DEFAULT FALSE,
       ADD COLUMN IF NOT EXISTS price BIGINT NOT NULL DEFAULT 0,
       ADD COLUMN IF NOT EXISTS file_key TEXT,

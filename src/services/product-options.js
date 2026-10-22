@@ -112,10 +112,10 @@ function quoteProduct(design, selection, productQuantity = 1) {
     if (submittedFields.some(field => !options.fields.some(configured => configured.id === field?.id))) throw invalid("مشخصهٔ ارسالی برای این محصول تعریف نشده است");
     const ids = selection?.extra_ids ?? [];
     const extras = selectedExtras(options.extras, ids);
-    const price = amount(design.price, true);
+    const price = amount(design.price);
     const total = price + extras.reduce((sum, extra) => sum + extra.price * extra.quantity, 0);
     const legacyPrice = price + extras.reduce((sum, extra) => sum + extra.price, 0);
-    if (!Number.isSafeInteger(total) || total > 1000000000) throw invalid("قیمت این ترکیب از محدودهٔ مجاز خارج است");
+    if (!Number.isSafeInteger(total) || total < 1 || total > 1000000000) throw invalid("برای ثبت سفارش، حداقل یک گزینهٔ قیمت‌دار انتخاب کنید");
     const configured = options.fields.length > 0 || options.extras.length > 0;
     return { price, legacyPrice, selection: configured ? { fields, extra_ids: ids, extras } : null };
   }

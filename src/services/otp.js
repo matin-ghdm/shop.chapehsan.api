@@ -10,7 +10,7 @@ const OTP_RESEND_SECONDS = Number(process.env.OTP_RESEND_SECONDS || 60);
 const OTP_MAX_ATTEMPTS = Number(process.env.OTP_MAX_ATTEMPTS || 5);
 const OTP_VERIFY_TOKEN_TTL = process.env.OTP_VERIFY_TOKEN_TTL || "15m";
 
-const ALLOWED_PURPOSES = new Set(["register", "login", "reset_password"]);
+const ALLOWED_PURPOSES = new Set(["register", "login", "reset_password", "admin_login"]);
 
 function httpError(message, status = 400, code = "OTP_ERROR") {
   const error = new Error(message);
@@ -54,6 +54,46 @@ async function latestOtp(phone, purpose) {
   return result.rows[0] || null;
 }
 
+async function createOtp(normalizedPhone, normalizedPurpose) {
+  const recent = await latestOtp(normalizedPhone, normalizedPurpose);
+  if (recent) {
+    const createdAt = new Date(recent.created_at).getTime();
+    const elapsed = (Date.now() - createdAt) / 1000;
+    if (elapsed < OTP_RESEND_SECONDS) {
+      const wait = Math.ceil(OTP_RESEND_SECONDS - elapsed);
+      throw httpError(`لطفاً ${wait} ثانیه دیگر دوباره تلاش کنید`, 429, "OTP_RATE_LIMIT");
+    }
+  }
+
+  const code = generateCode();
+  const codeHash = await bcrypt.hash(code, 10);
+  const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
+  const hasSmsConfig =
+    String(process.env.SMSIR_API_KEY || "").trim() &&
+    Number(process.env.SMSIR_OTP_TEMPLATE_ID || 0);
+  if (!hasSmsConfig && process.env.NODE_ENV === "production") {
+    throw httpError("سرویس پیامک پیکربندی نشده است", 500, "SMS_CONFIG");
+  }
+  const inserted = await query(
+    `INSERT INTO otp_codes (phone, purpose, code_hash, expires_at)
+     VALUES ($1, $2, $3, $4) RETURNING id`,
+    [normalizedPhone, normalizedPurpose, codeHash, expiresAt],
+  );
+
+  if (hasSmsConfig) {
+    try {
+      await smsir.sendOtp(normalizedPhone, code);
+    } catch (error) {
+      await query("DELETE FROM otp_codes WHERE id = $1", [inserted.rows[0].id]);
+      throw error;
+    }
+  } else {
+    console.log(`[OTP dev] phone=${normalizedPhone} purpose=${normalizedPurpose} code=${code}`);
+  }
+
+  return { otpId: String(inserted.rows[0].id), code, hasSmsConfig };
+}
+
 async function sendOtp({ phone, purpose = "register" }) {
   const normalizedPhone = normalizePhone(phone);
   const normalizedPurpose = normalizePurpose(purpose);
@@ -89,47 +129,7 @@ async function sendOtp({ phone, purpose = "register" }) {
     }
   }
 
-  const recent = await latestOtp(normalizedPhone, normalizedPurpose);
-  if (recent) {
-    const createdAt = new Date(recent.created_at).getTime();
-    const elapsed = (Date.now() - createdAt) / 1000;
-    if (elapsed < OTP_RESEND_SECONDS) {
-      const wait = Math.ceil(OTP_RESEND_SECONDS - elapsed);
-      throw httpError(
-        `لطفاً ${wait} ثانیه دیگر دوباره تلاش کنید`,
-        429,
-        "OTP_RATE_LIMIT",
-      );
-    }
-  }
-
-  const code = generateCode();
-  const codeHash = await bcrypt.hash(code, 10);
-  const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
-
-  await query(
-    `INSERT INTO otp_codes (phone, purpose, code_hash, expires_at)
-     VALUES ($1, $2, $3, $4)`,
-    [normalizedPhone, normalizedPurpose, codeHash, expiresAt],
-  );
-
-  const hasSmsConfig =
-    String(process.env.SMSIR_API_KEY || "").trim() &&
-    Number(process.env.SMSIR_OTP_TEMPLATE_ID || 0);
-
-  if (hasSmsConfig) {
-    await smsir.sendOtp(normalizedPhone, code);
-  } else if (process.env.NODE_ENV !== "production") {
-    console.log(
-      `[OTP dev] phone=${normalizedPhone} purpose=${normalizedPurpose} code=${code}`,
-    );
-  } else {
-    throw httpError(
-      "سرویس پیامک پیکربندی نشده است",
-      500,
-      "SMS_CONFIG",
-    );
-  }
+  const { code, hasSmsConfig } = await createOtp(normalizedPhone, normalizedPurpose);
 
   return {
     phone: normalizedPhone,
@@ -140,6 +140,55 @@ async function sendOtp({ phone, purpose = "register" }) {
       ? { devCode: code }
       : {}),
   };
+}
+
+async function sendAdminLoginOtp(phone) {
+  const normalizedPhone = normalizePhone(phone);
+  const { otpId, code, hasSmsConfig } = await createOtp(normalizedPhone, "admin_login");
+  return {
+    otpId,
+    ...(process.env.NODE_ENV !== "production" && !hasSmsConfig ? { devCode: code } : {}),
+  };
+}
+
+async function consumeAdminLoginOtp({ phone, otpId, code }) {
+  const normalizedPhone = normalizePhone(phone);
+  const rawCode = String(code || "").trim();
+  if (!/^\d{6}$/.test(rawCode) || !/^[1-9]\d*$/.test(String(otpId || ""))) {
+    throw httpError("کد تأیید معتبر نیست", 400, "OTP_INVALID");
+  }
+
+  const client = await require("../db").pool.connect();
+  let failure = null;
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `SELECT id, code_hash, attempts, expires_at, consumed_at
+       FROM otp_codes
+       WHERE id = $1 AND phone = $2 AND purpose = 'admin_login'
+       FOR UPDATE`,
+      [otpId, normalizedPhone],
+    );
+    const row = result.rows[0];
+    if (!row) failure = httpError("کد ورود پیدا نشد. دوباره وارد شوید", 404, "OTP_NOT_FOUND");
+    else if (row.consumed_at) failure = httpError("این کد قبلاً استفاده شده است", 409, "OTP_TOKEN_USED");
+    else if (new Date(row.expires_at).getTime() < Date.now()) failure = httpError("کد ورود منقضی شده است. دوباره وارد شوید", 410, "OTP_EXPIRED");
+    else if (row.attempts >= OTP_MAX_ATTEMPTS) failure = httpError("تعداد تلاش بیش از حد مجاز است. دوباره وارد شوید", 429, "OTP_MAX_ATTEMPTS");
+    else if (!(await bcrypt.compare(rawCode, row.code_hash))) {
+      await client.query("UPDATE otp_codes SET attempts = attempts + 1 WHERE id = $1", [row.id]);
+      failure = httpError("کد تأیید اشتباه است", 401, "OTP_INVALID");
+    } else {
+      await client.query("UPDATE otp_codes SET verified_at = NOW(), consumed_at = NOW(), attempts = attempts + 1 WHERE id = $1", [row.id]);
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+  if (failure) throw failure;
+  return true;
 }
 
 function signVerificationToken(phone, purpose, otpId) {
@@ -244,6 +293,8 @@ function assertVerificationToken(token, phone, purpose) {
 
 module.exports = {
   sendOtp,
+  sendAdminLoginOtp,
+  consumeAdminLoginOtp,
   verifyOtp,
   assertVerificationToken,
   getVerificationTokenPayload,

@@ -186,10 +186,58 @@ async function login({ phone, password }) {
     throw error;
   }
 
+  if (isPanelAccount(user)) {
+    const normalizedPhone = otpService.normalizePhone(user.phone);
+    const otp = await otpService.sendAdminLoginOtp(normalizedPhone);
+    const challengeToken = jwt.sign(
+      { type: "admin_login_challenge", id: user.id, phone: normalizedPhone, role: user.role, otpId: otp.otpId },
+      JWT_SECRET,
+      { expiresIn: "5m" },
+    );
+    return {
+      user: toPublicUser(user),
+      requiresOtp: true,
+      challengeToken,
+      ...(otp.devCode ? { devCode: otp.devCode } : {}),
+    };
+  }
+
   return {
     user: toPublicUser(user),
     token: signToken(user),
   };
+}
+
+async function verifyAdminLogin({ challengeToken, code }) {
+  let challenge;
+  try {
+    challenge = jwt.verify(String(challengeToken || ""), JWT_SECRET);
+  } catch {
+    const error = new Error("درخواست ورود منقضی شده است. دوباره وارد شوید");
+    error.status = 401;
+    error.code = "ADMIN_LOGIN_CHALLENGE_EXPIRED";
+    throw error;
+  }
+  if (challenge?.type !== "admin_login_challenge" || !challenge.id || !challenge.phone || !challenge.otpId) {
+    const error = new Error("درخواست ورود معتبر نیست. دوباره وارد شوید");
+    error.status = 401;
+    error.code = "ADMIN_LOGIN_CHALLENGE_INVALID";
+    throw error;
+  }
+
+  const user = await findById(challenge.id);
+  if (
+    !user || user.is_active === false || !isPanelAccount(user) ||
+    otpService.normalizePhone(user.phone) !== challenge.phone || user.role !== challenge.role
+  ) {
+    const error = new Error("حساب مدیریتی معتبر نیست");
+    error.status = 401;
+    error.code = "INVALID_CREDENTIALS";
+    throw error;
+  }
+
+  await otpService.consumeAdminLoginOtp({ phone: challenge.phone, otpId: challenge.otpId, code });
+  return { user: toPublicUser(user), token: signToken(user) };
 }
 
 async function resetPassword({ phone, password, otpToken }) {
@@ -475,6 +523,7 @@ module.exports = {
   register,
   createAdminUser,
   login,
+  verifyAdminLogin,
   resetPassword,
   updateUser,
   deactivateUser,

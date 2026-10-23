@@ -41,6 +41,19 @@ router.post("/login", async (req, res) => {
   } catch (err) {
     res.status(err.status || 500).json({
       message: err.message || "ورود ناموفق بود",
+      code: err.code || undefined,
+    });
+  }
+});
+
+router.post("/login/verify", async (req, res) => {
+  try {
+    const result = await usersService.verifyAdminLogin(req.body || {});
+    res.json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({
+      message: err.message || "تأیید ورود ناموفق بود",
+      code: err.code || undefined,
     });
   }
 });

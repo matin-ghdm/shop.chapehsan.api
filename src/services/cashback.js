@@ -81,6 +81,8 @@ async function saveCashbackSettings(value) {
 }
 
 function eligiblePurchaseAmount(order) {
+  if (String(order.discount_code || "").trim()) return 0;
+
   const digitalAmount = Number(order.digital_amount || 0);
   if (digitalAmount > 0) {
     return Math.max(0, Math.min(digitalAmount, Number(order.total_price || 0)));

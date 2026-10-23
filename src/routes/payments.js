@@ -88,7 +88,7 @@ router.post("/zibal/verify", async (req, res) => {
     }
 
     const orderResult = await query(
-      `SELECT id, user_id, status, total_price, subtotal_price, discount_amount,
+      `SELECT id, user_id, status, total_price, subtotal_price, discount_code, discount_amount,
               shipping_fee, rush_fee, payment_track_id, payment_ref_number,
               (SELECT download_id FROM download_purchases WHERE order_id=orders.id) AS download_id,
               (SELECT amount FROM download_purchases WHERE order_id=orders.id) AS digital_amount
@@ -132,7 +132,7 @@ router.post("/zibal/verify", async (req, res) => {
       try {
         await client.query("BEGIN");
         const locked = await client.query(
-          `SELECT id, user_id, status, total_price, subtotal_price, discount_amount,
+          `SELECT id, user_id, status, total_price, subtotal_price, discount_code, discount_amount,
                   shipping_fee, rush_fee, payment_ref_number,
                   (SELECT amount FROM download_purchases WHERE order_id=orders.id) AS digital_amount
            FROM orders WHERE id = $1 FOR UPDATE`,

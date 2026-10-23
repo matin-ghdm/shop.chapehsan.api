@@ -59,7 +59,8 @@ async function createOtp(normalizedPhone, normalizedPurpose) {
   if (recent) {
     const createdAt = new Date(recent.created_at).getTime();
     const elapsed = (Date.now() - createdAt) / 1000;
-    if (elapsed < OTP_RESEND_SECONDS) {
+    const isUsable = !recent.consumed_at && new Date(recent.expires_at).getTime() > Date.now();
+    if (isUsable && elapsed < OTP_RESEND_SECONDS) {
       const wait = Math.ceil(OTP_RESEND_SECONDS - elapsed);
       throw httpError(`لطفاً ${wait} ثانیه دیگر دوباره تلاش کنید`, 429, "OTP_RATE_LIMIT");
     }
@@ -144,11 +145,28 @@ async function sendOtp({ phone, purpose = "register" }) {
 
 async function sendAdminLoginOtp(phone) {
   const normalizedPhone = normalizePhone(phone);
-  const { otpId, code, hasSmsConfig } = await createOtp(normalizedPhone, "admin_login");
-  return {
-    otpId,
-    ...(process.env.NODE_ENV !== "production" && !hasSmsConfig ? { devCode: code } : {}),
-  };
+  const recent = await latestOtp(normalizedPhone, "admin_login");
+  if (recent && !recent.consumed_at && new Date(recent.expires_at).getTime() > Date.now()) {
+    const elapsed = (Date.now() - new Date(recent.created_at).getTime()) / 1000;
+    if (elapsed < OTP_RESEND_SECONDS) {
+      return { otpId: String(recent.id), alreadySent: true };
+    }
+  }
+  try {
+    const { otpId, code, hasSmsConfig } = await createOtp(normalizedPhone, "admin_login");
+    return {
+      otpId,
+      alreadySent: false,
+      ...(process.env.NODE_ENV !== "production" && !hasSmsConfig ? { devCode: code } : {}),
+    };
+  } catch (error) {
+    if (error.code !== "OTP_RATE_LIMIT") throw error;
+    const latest = await latestOtp(normalizedPhone, "admin_login");
+    if (latest && !latest.consumed_at && new Date(latest.expires_at).getTime() > Date.now()) {
+      return { otpId: String(latest.id), alreadySent: true };
+    }
+    throw error;
+  }
 }
 
 async function consumeAdminLoginOtp({ phone, otpId, code }) {

@@ -197,6 +197,7 @@ async function login({ phone, password }) {
     return {
       user: toPublicUser(user),
       requiresOtp: true,
+      otpAlreadySent: otp.alreadySent,
       challengeToken,
       ...(otp.devCode ? { devCode: otp.devCode } : {}),
     };

@@ -88,8 +88,10 @@ router.post("/zibal/verify", async (req, res) => {
     }
 
     const orderResult = await query(
-      `SELECT id, user_id, status, total_price, payment_track_id, payment_ref_number,
-              (SELECT download_id FROM download_purchases WHERE order_id=orders.id) AS download_id
+      `SELECT id, user_id, status, total_price, subtotal_price, discount_amount,
+              shipping_fee, rush_fee, payment_track_id, payment_ref_number,
+              (SELECT download_id FROM download_purchases WHERE order_id=orders.id) AS download_id,
+              (SELECT amount FROM download_purchases WHERE order_id=orders.id) AS digital_amount
        FROM orders
        WHERE payment_track_id = $1
        LIMIT 1`,
@@ -130,7 +132,10 @@ router.post("/zibal/verify", async (req, res) => {
       try {
         await client.query("BEGIN");
         const locked = await client.query(
-          "SELECT id, user_id, status FROM orders WHERE id = $1 FOR UPDATE",
+          `SELECT id, user_id, status, total_price, subtotal_price, discount_amount,
+                  shipping_fee, rush_fee, payment_ref_number,
+                  (SELECT amount FROM download_purchases WHERE order_id=orders.id) AS digital_amount
+           FROM orders WHERE id = $1 FOR UPDATE`,
           [order.id],
         );
         const current = locked.rows[0];
@@ -169,6 +174,8 @@ router.post("/zibal/verify", async (req, res) => {
           [verify.refNumber ? String(verify.refNumber) : null,
             verify.cardNumber ? String(verify.cardNumber) : null, order.id],
         );
+        await client.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [current.user_id]);
+        await require("../services/cashback").awardCashback(client, current);
         await client.query("COMMIT");
       } catch (err) {
         await client.query("ROLLBACK");

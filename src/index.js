@@ -22,6 +22,7 @@ app.use("/users", usersRouter);
 app.use("/otp", require("./routes/otp"));
 app.use("/orders", ordersRouter);
 app.use("/order-schedule", require("./routes/order-schedule"));
+app.use("/cashback", require("./routes/cashback"));
 app.use("/order-items", orderItemsRouter);
 app.use("/addresses", addressesRouter);
 app.use("/slides", slidesRouter);
@@ -173,6 +174,7 @@ async function startServer() {
   await require("./migrations/ensure-download-management").ensureDownloadManagement();
   await require("./migrations/ensure-discount-codes").ensureDiscountCodes();
   await require("./migrations/ensure-wallet").ensureWallet();
+  await require("./migrations/ensure-cashback-settings").ensureCashbackSettings();
   await require("./migrations/ensure-telegram-bot").ensureTelegramBotTables();
   await require("./migrations/ensure-laser-requests").ensureLaserRequests();
   await require("./migrations/ensure-service-requests").ensureServiceRequests();

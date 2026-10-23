@@ -16,6 +16,32 @@ async function ensureWallet() {
     )
   `);
   await query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'wallet_transactions_type_check'
+          AND (
+            pg_get_constraintdef(oid) NOT LIKE '%cashback_reward%'
+            OR pg_get_constraintdef(oid) NOT LIKE '%cashback_reversal%'
+          )
+      ) THEN
+        ALTER TABLE wallet_transactions DROP CONSTRAINT wallet_transactions_type_check;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'wallet_transactions_type_check'
+      ) THEN
+        ALTER TABLE wallet_transactions ADD CONSTRAINT wallet_transactions_type_check CHECK (type IN (
+          'order_wallet_payment',
+          'order_cancel_refund',
+          'late_payment_refund',
+          'cashback_reward',
+          'cashback_reversal'
+        ));
+      END IF;
+    END $$
+  `);
+  await query(`
     CREATE UNIQUE INDEX IF NOT EXISTS wallet_transactions_order_type_uidx
       ON wallet_transactions (order_id, type)
       WHERE order_id IS NOT NULL

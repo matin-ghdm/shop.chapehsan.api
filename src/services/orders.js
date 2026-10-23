@@ -617,7 +617,7 @@ async function createOrder(payload, currentUser) {
 
     const walletService = require("./wallet");
     const walletBalance = await walletService.getBalance(userId, client);
-    const walletAmount = Math.min(walletBalance, amountBeforeWallet);
+    const walletAmount = Math.min(Math.max(0, walletBalance), amountBeforeWallet);
     const amountDue = amountBeforeWallet - walletAmount;
     const paymentStatus = amountDue === 0 ? "paid" : finalOrder.status;
     const walletUpdated = await client.query(
@@ -735,6 +735,53 @@ async function updateOrder(id, payload) {
             amount: refund,
           });
         }
+        const cashbackResult = await client.query(
+          `SELECT amount FROM wallet_transactions
+           WHERE order_id = $1 AND type = 'cashback_reward'`,
+          [lockedOrder.id],
+        );
+        const cashbackAmount = Number(cashbackResult.rows[0]?.amount || 0);
+        if (cashbackAmount > 0) {
+          await require("./wallet").addTransaction(client, {
+            userId: lockedOrder.user_id,
+            orderId: lockedOrder.id,
+            type: "cashback_reversal",
+            amount: -cashbackAmount,
+          });
+        }
+      }
+      const items = await getItemsByOrderId(id, client);
+      await client.query("COMMIT");
+      return { ...result.rows[0], items };
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  if (payload.status === "paid") {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const locked = await client.query(
+        `SELECT ${ORDER_COLUMNS},
+                (SELECT amount FROM download_purchases WHERE order_id=orders.id) AS digital_amount
+         FROM orders WHERE id = $1 FOR UPDATE`,
+        [id],
+      );
+      const lockedOrder = locked.rows[0];
+      if (!lockedOrder) throw httpError("سفارش پیدا نشد", 404, "NOT_FOUND");
+      const result = await client.query(
+        `UPDATE orders SET ${fields.join(", ")}, paid_at = COALESCE(paid_at, NOW())
+         WHERE id = $${i}
+         RETURNING ${ORDER_COLUMNS}`,
+        values,
+      );
+      if (lockedOrder.status !== "paid") {
+        await client.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [lockedOrder.user_id]);
+        await require("./cashback").awardCashback(client, lockedOrder);
       }
       const items = await getItemsByOrderId(id, client);
       await client.query("COMMIT");

@@ -45,6 +45,18 @@ router.post("/login", async (req, res) => {
   }
 });
 
+router.post("/reset-password", async (req, res) => {
+  try {
+    const result = await usersService.resetPassword(req.body || {});
+    res.json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({
+      message: err.message || "بازنشانی رمز عبور ناموفق بود",
+      code: err.code || "RESET_PASSWORD_FAILED",
+    });
+  }
+});
+
 router.get("/me", authenticate, async (req, res) => {
   res.json({ user: req.user });
 });

@@ -1,6 +1,6 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const { query } = require("../db");
+const { pool, query } = require("../db");
 const otpService = require("./otp");
 const { normalizePermissions, isPanelAccount, PANEL_PERMISSIONS } = require("../lib/panel-permissions");
 
@@ -190,6 +190,63 @@ async function login({ phone, password }) {
     user: toPublicUser(user),
     token: signToken(user),
   };
+}
+
+async function resetPassword({ phone, password, otpToken }) {
+  const normalizedPhone = otpService.normalizePhone(phone);
+  const nextPassword = String(password || "");
+  if (nextPassword.length < 6) {
+    const error = new Error("رمز عبور باید حداقل ۶ کاراکتر باشد");
+    error.status = 400;
+    error.code = "WEAK_PASSWORD";
+    throw error;
+  }
+
+  const verification = otpService.getVerificationTokenPayload(
+    otpToken,
+    normalizedPhone,
+    "reset_password",
+  );
+  const otpId = String(verification.otpId || "");
+  if (!/^[1-9]\d*$/.test(otpId)) {
+    const error = new Error("کد تأیید معتبر نیست؛ دوباره درخواست دهید");
+    error.status = 401;
+    error.code = "OTP_TOKEN_INVALID";
+    throw error;
+  }
+
+  const passwordHash = await bcrypt.hash(nextPassword, 10);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const consumed = await client.query(
+      `UPDATE otp_codes
+       SET consumed_at = NOW()
+       WHERE id = $1 AND phone = $2 AND purpose = 'reset_password'
+         AND verified_at IS NOT NULL AND consumed_at IS NULL AND expires_at > NOW()
+       RETURNING id`,
+      [otpId, normalizedPhone],
+    );
+    if (!consumed.rowCount) {
+      const error = new Error("کد تأیید منقضی یا قبلاً استفاده شده است؛ دوباره درخواست دهید");
+      error.status = 409;
+      error.code = "OTP_TOKEN_USED";
+      throw error;
+    }
+
+    await client.query(
+      `UPDATE users SET password_hash = $1
+       WHERE phone = $2 AND is_active IS DISTINCT FROM FALSE`,
+      [passwordHash, normalizedPhone],
+    );
+    await client.query("COMMIT");
+    return { message: "در صورت وجود حساب فعال، رمز عبور بازنشانی شد" };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 async function updateUser(id, payload = {}, actor = null) {
@@ -418,6 +475,7 @@ module.exports = {
   register,
   createAdminUser,
   login,
+  resetPassword,
   updateUser,
   deactivateUser,
   findById,

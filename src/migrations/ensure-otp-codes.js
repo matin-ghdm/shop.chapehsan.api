@@ -11,8 +11,14 @@ async function ensureOtpCodesTable() {
       attempts INT NOT NULL DEFAULT 0,
       expires_at TIMESTAMPTZ NOT NULL,
       verified_at TIMESTAMPTZ,
+      consumed_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `);
+
+  await query(`
+    ALTER TABLE otp_codes
+      ADD COLUMN IF NOT EXISTS consumed_at TIMESTAMPTZ
   `);
 
   await query(`

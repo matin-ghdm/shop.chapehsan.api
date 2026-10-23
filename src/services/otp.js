@@ -44,7 +44,7 @@ function generateCode() {
 
 async function latestOtp(phone, purpose) {
   const result = await query(
-    `SELECT id, phone, purpose, code_hash, attempts, expires_at, verified_at, created_at
+    `SELECT id, phone, purpose, code_hash, attempts, expires_at, verified_at, consumed_at, created_at
      FROM otp_codes
      WHERE phone = $1 AND purpose = $2
      ORDER BY created_at DESC
@@ -72,8 +72,25 @@ async function sendOtp({ phone, purpose = "register" }) {
     }
   }
 
+  if (normalizedPurpose === "reset_password") {
+    const existing = await query(
+      `SELECT id FROM users WHERE phone = $1 AND is_active IS DISTINCT FROM FALSE LIMIT 1`,
+      [normalizedPhone],
+    );
+    if (!existing.rows[0]) {
+      // Return the same response as a real send so this endpoint does not
+      // disclose whether a phone number has an account.
+      return {
+        phone: normalizedPhone,
+        purpose: normalizedPurpose,
+        expiresInSeconds: OTP_TTL_MINUTES * 60,
+        resendAfterSeconds: OTP_RESEND_SECONDS,
+      };
+    }
+  }
+
   const recent = await latestOtp(normalizedPhone, normalizedPurpose);
-  if (recent && !recent.verified_at) {
+  if (recent) {
     const createdAt = new Date(recent.created_at).getTime();
     const elapsed = (Date.now() - createdAt) / 1000;
     if (elapsed < OTP_RESEND_SECONDS) {
@@ -125,8 +142,8 @@ async function sendOtp({ phone, purpose = "register" }) {
   };
 }
 
-function signVerificationToken(phone, purpose) {
-  return jwt.sign({ phone, purpose, type: "otp_verified" }, JWT_SECRET, {
+function signVerificationToken(phone, purpose, otpId) {
+  return jwt.sign({ phone, purpose, otpId: String(otpId), type: "otp_verified" }, JWT_SECRET, {
     expiresIn: OTP_VERIFY_TOKEN_TTL,
   });
 }
@@ -145,17 +162,21 @@ async function verifyOtp({ phone, code, purpose = "register" }) {
     throw httpError("کد تأیید یافت نشد. دوباره درخواست دهید", 404, "OTP_NOT_FOUND");
   }
 
-  if (row.verified_at) {
-    return {
-      phone: normalizedPhone,
-      purpose: normalizedPurpose,
-      verificationToken: signVerificationToken(normalizedPhone, normalizedPurpose),
-      alreadyVerified: true,
-    };
+  if (row.consumed_at) {
+    throw httpError("کد تأیید قبلاً استفاده شده است", 409, "OTP_TOKEN_USED");
   }
 
   if (new Date(row.expires_at).getTime() < Date.now()) {
     throw httpError("کد تأیید منقضی شده است", 410, "OTP_EXPIRED");
+  }
+
+  if (row.verified_at) {
+    return {
+      phone: normalizedPhone,
+      purpose: normalizedPurpose,
+      verificationToken: signVerificationToken(normalizedPhone, normalizedPurpose, row.id),
+      alreadyVerified: true,
+    };
   }
 
   if (row.attempts >= OTP_MAX_ATTEMPTS) {
@@ -182,11 +203,11 @@ async function verifyOtp({ phone, code, purpose = "register" }) {
   return {
     phone: normalizedPhone,
     purpose: normalizedPurpose,
-    verificationToken: signVerificationToken(normalizedPhone, normalizedPurpose),
+    verificationToken: signVerificationToken(normalizedPhone, normalizedPurpose, row.id),
   };
 }
 
-function assertVerificationToken(token, phone, purpose) {
+function getVerificationTokenPayload(token, phone, purpose) {
   const normalizedPhone = normalizePhone(phone);
   const normalizedPurpose = normalizePurpose(purpose);
 
@@ -213,6 +234,11 @@ function assertVerificationToken(token, phone, purpose) {
     throw httpError("کد تأیید معتبر نیست", 401, "OTP_TOKEN_INVALID");
   }
 
+  return payload;
+}
+
+function assertVerificationToken(token, phone, purpose) {
+  getVerificationTokenPayload(token, phone, purpose);
   return true;
 }
 
@@ -220,5 +246,6 @@ module.exports = {
   sendOtp,
   verifyOtp,
   assertVerificationToken,
+  getVerificationTokenPayload,
   normalizePhone,
 };

@@ -114,6 +114,7 @@ function makeQrMatrix(text) {
   for (let i = 0; i < 15; i += 1) {
     if (i < 6) setFunction(8, i, false);
     else if (i < 8) setFunction(8, i + 1, false);
+    else if (i === 8) setFunction(7, 8, false);
     else setFunction(14 - i, 8, false);
 
     if (i < 8) setFunction(QR_SIZE - 1 - i, 8, false);
@@ -144,6 +145,7 @@ function makeQrMatrix(text) {
     const bit = ((format >>> i) & 1) !== 0;
     if (i < 6) matrix[i][8] = bit;
     else if (i < 8) matrix[i + 1][8] = bit;
+    else if (i === 8) matrix[8][7] = bit;
     else matrix[8][14 - i] = bit;
 
     if (i < 8) matrix[8][QR_SIZE - 1 - i] = bit;

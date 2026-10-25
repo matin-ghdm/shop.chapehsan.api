@@ -54,7 +54,7 @@ router.get("/public/:slug/qr.svg", async (req, res) => {
   try {
     const card = await query("SELECT public_id FROM digital_cards WHERE public_id=$1", [clean(req.params.slug, 32)]);
     if (!card.rowCount) return fail(res, 404, "کارت پیدا نشد");
-    const base = String(process.env.DIGITAL_CARD_PUBLIC_BASE_URL || "https://chapehsan.com").replace(/\/$/, "");
+    const base = String(process.env.DIGITAL_CARD_PUBLIC_BASE_URL || "https://www.chapehsan.com").replace(/\/$/, "");
     const link = `${base}/c/${encodeURIComponent(card.rows[0].public_id)}`;
     const size = Number(req.query.size) || 512;
     const svg = qrCode.toSvg(qrCode.makeQrMatrix(link), { color: req.query.color, size, transparent: req.query.transparent === "true" });
@@ -66,7 +66,7 @@ router.get("/public/:slug/qr.png", async (req, res) => {
   try {
     const card = await query("SELECT public_id FROM digital_cards WHERE public_id=$1", [clean(req.params.slug, 32)]);
     if (!card.rowCount) return fail(res, 404, "کارت پیدا نشد");
-    const base = String(process.env.DIGITAL_CARD_PUBLIC_BASE_URL || "https://chapehsan.com").replace(/\/$/, "");
+    const base = String(process.env.DIGITAL_CARD_PUBLIC_BASE_URL || "https://www.chapehsan.com").replace(/\/$/, "");
     const link = `${base}/c/${encodeURIComponent(card.rows[0].public_id)}`;
     const png = qrCode.toPng(qrCode.makeQrMatrix(link), { color: req.query.color, size: req.query.size, transparent: req.query.transparent === "true" });
     res.set({ "Content-Type": "image/png", "Content-Disposition": `attachment; filename="${card.rows[0].public_id}.png"`, "Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff" }).send(png);

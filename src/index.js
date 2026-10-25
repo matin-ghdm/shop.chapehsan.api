@@ -38,6 +38,7 @@ app.use("/discount-codes", require("./routes/discount-codes"));
 app.use("/wallet", require("./routes/wallet"));
 app.use("/laser-requests", require("./routes/laser-requests"));
 app.use("/service-requests", require("./routes/service-requests"));
+app.use("/digital-cards", require("./routes/digital-cards"));
 
 /**
  * @openapi
@@ -178,6 +179,7 @@ async function startServer() {
   await require("./migrations/ensure-telegram-bot").ensureTelegramBotTables();
   await require("./migrations/ensure-laser-requests").ensureLaserRequests();
   await require("./migrations/ensure-service-requests").ensureServiceRequests();
+  await require("./migrations/ensure-digital-cards").ensureDigitalCards();
   await require("./migrations/ensure-customer-roles").ensureCustomerRoles();
   await require("./migrations/ensure-site-analytics").ensureSiteAnalytics();
   await require("./migrations/ensure-order-delivery-schedule").ensureOrderDeliverySchedule();

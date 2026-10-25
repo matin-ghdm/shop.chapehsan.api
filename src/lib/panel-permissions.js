@@ -9,6 +9,7 @@ const PANEL_PERMISSIONS = [
   "calendar.manage",
   "discounts.manage",
   "settings.manage",
+  "digital_cards.manage",
 ];
 
 function normalizePermissions(value) {

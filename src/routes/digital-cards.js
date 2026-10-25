@@ -4,6 +4,7 @@ const { pool, query } = require("../db");
 const { authenticate } = require("../middleware/auth");
 const { requirePermission } = require("../lib/panel-permissions");
 const qrCode = require("../lib/qr-code");
+const { buildDigitalCardVCard } = require("../lib/digital-card-vcard");
 
 const router = express.Router();
 const templates = new Set(["corporate", "minimal", "luxury", "shop", "medical"]);
@@ -52,24 +53,22 @@ router.get("/public/:slug", async (req, res) => {
 
 router.get("/public/:slug/qr.svg", async (req, res) => {
   try {
-    const card = await query("SELECT public_id FROM digital_cards WHERE public_id=$1", [clean(req.params.slug, 32)]);
+    const card = await query("SELECT public_id,title,data FROM digital_cards WHERE public_id=$1", [clean(req.params.slug, 32)]);
     if (!card.rowCount) return fail(res, 404, "کارت پیدا نشد");
-    const base = String(process.env.DIGITAL_CARD_PUBLIC_BASE_URL || "https://www.chapehsan.com").replace(/\/$/, "");
-    const link = `${base}/c/${encodeURIComponent(card.rows[0].public_id)}`;
+    const contact = buildDigitalCardVCard(card.rows[0]);
     const size = Number(req.query.size) || 512;
-    const svg = qrCode.toSvg(qrCode.makeQrMatrix(link), { color: req.query.color, size, transparent: req.query.transparent === "true" });
-    res.set({ "Content-Type": "image/svg+xml; charset=utf-8", "Content-Disposition": `attachment; filename="${card.rows[0].public_id}.svg"`, "Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff" }).send(svg);
+    const svg = qrCode.toSvg(qrCode.makeQrMatrix(contact), { color: req.query.color, size, transparent: req.query.transparent === "true" });
+    res.set({ "Content-Type": "image/svg+xml; charset=utf-8", "Content-Disposition": `attachment; filename="${card.rows[0].public_id}-contact.svg"`, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" }).send(svg);
   } catch (error) { res.status(error.status || 500).json({ message: error.message || "ساخت QR ممکن نشد" }); }
 });
 
 router.get("/public/:slug/qr.png", async (req, res) => {
   try {
-    const card = await query("SELECT public_id FROM digital_cards WHERE public_id=$1", [clean(req.params.slug, 32)]);
+    const card = await query("SELECT public_id,title,data FROM digital_cards WHERE public_id=$1", [clean(req.params.slug, 32)]);
     if (!card.rowCount) return fail(res, 404, "کارت پیدا نشد");
-    const base = String(process.env.DIGITAL_CARD_PUBLIC_BASE_URL || "https://www.chapehsan.com").replace(/\/$/, "");
-    const link = `${base}/c/${encodeURIComponent(card.rows[0].public_id)}`;
-    const png = qrCode.toPng(qrCode.makeQrMatrix(link), { color: req.query.color, size: req.query.size, transparent: req.query.transparent === "true" });
-    res.set({ "Content-Type": "image/png", "Content-Disposition": `attachment; filename="${card.rows[0].public_id}.png"`, "Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff" }).send(png);
+    const contact = buildDigitalCardVCard(card.rows[0]);
+    const png = qrCode.toPng(qrCode.makeQrMatrix(contact), { color: req.query.color, size: req.query.size, transparent: req.query.transparent === "true" });
+    res.set({ "Content-Type": "image/png", "Content-Disposition": `attachment; filename="${card.rows[0].public_id}-contact.png"`, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" }).send(png);
   } catch (error) { res.status(error.status || 500).json({ message: error.message || "ساخت QR ممکن نشد" }); }
 });
 

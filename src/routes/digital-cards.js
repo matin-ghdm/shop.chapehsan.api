@@ -10,6 +10,7 @@ const templates = new Set(["corporate", "minimal", "luxury", "shop", "medical"])
 const eventTypes = new Set(["view", "mobile", "phone", "map", "messenger", "social", "website", "email"]);
 const clean = (v, max = 500) => String(v ?? "").trim().slice(0, max);
 const fail = (res, status, message) => res.status(status).json({ message });
+const isSiteAdmin = (user) => String(user?.role || "").trim().toLowerCase() === "admin";
 
 async function getPlanSettings() {
   const result = await query("SELECT key, value FROM digital_card_settings");
@@ -26,7 +27,7 @@ async function publicCardBySlug(slug) {
   const card = result.rows[0];
   if (!card) return null;
   const accessEndsAt = card.access_ends_at ? new Date(card.access_ends_at) : null;
-  const permitted = (card.status === "active" || card.status === "trial") && accessEndsAt && accessEndsAt > new Date();
+  const permitted = card.access_exempt === true || ((card.status === "active" || card.status === "trial") && accessEndsAt && accessEndsAt > new Date());
   return permitted ? card : { ...card, status: "expired", data: null };
 }
 
@@ -117,6 +118,7 @@ router.get("/mine", async (req, res) => {
 router.post("/", async (req, res) => {
   const title = clean(req.body?.title || "کارت جدید", 120);
   const template = clean(req.body?.template || "corporate", 30);
+  const isAdmin = isSiteAdmin(req.user);
   if (!templates.has(template)) return fail(res, 400, "قالب کارت معتبر نیست");
   try {
     const settings = await getPlanSettings();
@@ -124,11 +126,11 @@ router.post("/", async (req, res) => {
     try {
       await client.query("BEGIN");
       await client.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [req.user.id]);
-      const trial = await client.query("SELECT id FROM digital_cards WHERE user_id=$1 AND trial_started_at IS NOT NULL LIMIT 1", [req.user.id]);
+      const trial = isAdmin ? { rowCount: 1 } : await client.query("SELECT id FROM digital_cards WHERE user_id=$1 AND trial_started_at IS NOT NULL LIMIT 1", [req.user.id]);
       const trialDays = Math.max(1, Math.min(30, Number(settings.trial_days ?? 7)));
-      const result = await client.query(`INSERT INTO digital_cards(user_id,public_id,title,template,data,status,trial_started_at,trial_ends_at)
-        VALUES($1,$2,$3,$4,'{}'::jsonb,$5,CASE WHEN $6 THEN NULL ELSE NOW() END,CASE WHEN $6 THEN NULL ELSE NOW()+($7::text||' days')::interval END) RETURNING *`,
-        [req.user.id, crypto.randomBytes(8).toString("base64url"), title, template, trial.rowCount ? "draft" : "trial", trial.rowCount > 0, trialDays]);
+      const result = await client.query(`INSERT INTO digital_cards(user_id,public_id,title,template,data,status,trial_started_at,trial_ends_at,access_exempt)
+        VALUES($1,$2,$3,$4,'{}'::jsonb,$5,CASE WHEN $6 THEN NULL ELSE NOW() END,CASE WHEN $6 THEN NULL ELSE NOW()+($7::text||' days')::interval END,$8) RETURNING *`,
+        [req.user.id, crypto.randomBytes(8).toString("base64url"), title, template, isAdmin ? "active" : trial.rowCount ? "draft" : "trial", trial.rowCount > 0, trialDays, isAdmin]);
       await client.query("COMMIT");
       return res.status(201).json({ card: result.rows[0] });
     } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
@@ -178,6 +180,11 @@ router.post("/subscriptions", async (req, res) => {
     await client.query("BEGIN");
     const owned = await client.query("SELECT id,public_id FROM digital_cards WHERE id=$1 AND user_id=$2 FOR UPDATE", [cardId, req.user.id]);
     if (!owned.rowCount) { await client.query("ROLLBACK"); return fail(res, 404, "کارت پیدا نشد"); }
+    if (isSiteAdmin(req.user)) {
+      await client.query("UPDATE digital_cards SET access_exempt=TRUE,status='active',updated_at=NOW() WHERE id=$1", [cardId]);
+      await client.query("COMMIT");
+      return res.json({ free: true, cardId, status: "active" });
+    }
     const priceKey = `plan_${months}_price`;
     const activeKey = `plan_${months}_active`;
     const settingsRows = await client.query("SELECT key,value FROM digital_card_settings WHERE key IN ($1,$2)", [priceKey, activeKey]);

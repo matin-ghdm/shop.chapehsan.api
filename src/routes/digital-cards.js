@@ -23,7 +23,7 @@ async function publicCardBySlug(slug) {
       (SELECT COUNT(*)::int FROM digital_card_events e WHERE e.card_id=c.id AND e.event_type='view') AS views
     FROM digital_cards c
     LEFT JOIN LATERAL (SELECT ends_at FROM digital_card_subscriptions WHERE card_id=c.id AND ends_at > NOW() ORDER BY ends_at DESC LIMIT 1) s ON TRUE
-    WHERE c.public_id=$1 LIMIT 1`, [slug]);
+    WHERE c.public_id=$1 AND c.deleted_at IS NULL LIMIT 1`, [slug]);
   const card = result.rows[0];
   if (!card) return null;
   const accessEndsAt = card.access_ends_at ? new Date(card.access_ends_at) : null;
@@ -52,7 +52,7 @@ router.get("/public/:slug", async (req, res) => {
 
 router.get("/public/:slug/qr.svg", async (req, res) => {
   try {
-    const card = await query("SELECT public_id FROM digital_cards WHERE public_id=$1", [clean(req.params.slug, 32)]);
+    const card = await query("SELECT public_id FROM digital_cards WHERE public_id=$1 AND deleted_at IS NULL", [clean(req.params.slug, 32)]);
     if (!card.rowCount) return fail(res, 404, "کارت پیدا نشد");
     const base = String(process.env.DIGITAL_CARD_PUBLIC_BASE_URL || "https://www.chapehsan.com").replace(/\/$/, "");
     const link = `${base}/c/${encodeURIComponent(card.rows[0].public_id)}`;
@@ -64,7 +64,7 @@ router.get("/public/:slug/qr.svg", async (req, res) => {
 
 router.get("/public/:slug/qr.png", async (req, res) => {
   try {
-    const card = await query("SELECT public_id FROM digital_cards WHERE public_id=$1", [clean(req.params.slug, 32)]);
+    const card = await query("SELECT public_id FROM digital_cards WHERE public_id=$1 AND deleted_at IS NULL", [clean(req.params.slug, 32)]);
     if (!card.rowCount) return fail(res, 404, "کارت پیدا نشد");
     const base = String(process.env.DIGITAL_CARD_PUBLIC_BASE_URL || "https://www.chapehsan.com").replace(/\/$/, "");
     const link = `${base}/c/${encodeURIComponent(card.rows[0].public_id)}`;
@@ -110,7 +110,7 @@ router.get("/mine", async (req, res) => {
     const result = await query(`SELECT c.*,
       COALESCE((SELECT MAX(ends_at) FROM digital_card_subscriptions WHERE card_id=c.id), c.trial_ends_at) AS access_ends_at,
       (SELECT COUNT(*)::int FROM digital_card_events WHERE card_id=c.id AND event_type='view') AS views
-      FROM digital_cards c WHERE c.user_id=$1 ORDER BY c.created_at DESC`, [req.user.id]);
+      FROM digital_cards c WHERE c.user_id=$1 AND c.deleted_at IS NULL ORDER BY c.created_at DESC`, [req.user.id]);
     res.json({ cards: result.rows });
   } catch (error) { res.status(500).json({ message: "دریافت کارت‌ها ممکن نشد" }); }
 });
@@ -146,15 +146,27 @@ router.put("/:id", async (req, res) => {
   const title = clean([data.firstName, data.lastName].filter(Boolean).join(" ") || req.body?.title || "کارت دیجیتال", 120);
   try {
     const result = await query(`UPDATE digital_cards SET data=$1::jsonb,template=$2,accent_color=$3,title=$4,updated_at=NOW()
-      WHERE id=$5 AND user_id=$6 RETURNING *`, [JSON.stringify(data), template, color, title, req.params.id, req.user.id]);
+      WHERE id=$5 AND user_id=$6 AND deleted_at IS NULL RETURNING *`, [JSON.stringify(data), template, color, title, req.params.id, req.user.id]);
     if (!result.rowCount) return fail(res, 404, "کارت پیدا نشد");
     res.json({ card: result.rows[0] });
   } catch (error) { res.status(500).json({ message: "ذخیره کارت ممکن نشد" }); }
 });
 
+router.delete("/:id", async (req, res) => {
+  try {
+    const result = await query(`UPDATE digital_cards SET deleted_at=NOW(),updated_at=NOW()
+      WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL RETURNING id`, [req.params.id, req.user.id]);
+    if (!result.rowCount) return fail(res, 404, "کارت پیدا نشد یا قبلاً حذف شده است");
+    res.json({ deleted: true, id: result.rows[0].id });
+  } catch (error) {
+    console.error("Delete digital card failed:", error.message);
+    res.status(500).json({ message: "حذف کارت ممکن نشد" });
+  }
+});
+
 router.get("/:id/stats", async (req, res) => {
   try {
-    const owned = await query("SELECT id FROM digital_cards WHERE id=$1 AND user_id=$2", [req.params.id, req.user.id]);
+    const owned = await query("SELECT id FROM digital_cards WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL", [req.params.id, req.user.id]);
     if (!owned.rowCount) return fail(res, 404, "کارت پیدا نشد");
     const result = await query(`SELECT event_type, COUNT(*)::int AS count FROM digital_card_events WHERE card_id=$1 GROUP BY event_type ORDER BY event_type`, [req.params.id]);
     res.json({ events: result.rows });
@@ -163,7 +175,7 @@ router.get("/:id/stats", async (req, res) => {
 
 router.get("/:id/subscriptions", async (req, res) => {
   try {
-    const owned = await query("SELECT id FROM digital_cards WHERE id=$1 AND user_id=$2", [req.params.id, req.user.id]);
+    const owned = await query("SELECT id FROM digital_cards WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL", [req.params.id, req.user.id]);
     if (!owned.rowCount) return fail(res, 404, "کارت پیدا نشد");
     const result = await query(`SELECT s.id,s.plan_months,s.amount,s.starts_at,s.ends_at,s.created_at,o.id AS order_id,o.status AS order_status,o.payment_ref_number
       FROM digital_card_subscriptions s LEFT JOIN orders o ON o.id=s.order_id WHERE s.card_id=$1 ORDER BY s.created_at DESC`, [req.params.id]);
@@ -178,7 +190,7 @@ router.post("/subscriptions", async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const owned = await client.query("SELECT id,public_id FROM digital_cards WHERE id=$1 AND user_id=$2 FOR UPDATE", [cardId, req.user.id]);
+    const owned = await client.query("SELECT id,public_id FROM digital_cards WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL FOR UPDATE", [cardId, req.user.id]);
     if (!owned.rowCount) { await client.query("ROLLBACK"); return fail(res, 404, "کارت پیدا نشد"); }
     if (isSiteAdmin(req.user)) {
       await client.query("UPDATE digital_cards SET access_exempt=TRUE,status='active',updated_at=NOW() WHERE id=$1", [cardId]);
@@ -208,7 +220,7 @@ router.post("/subscriptions", async (req, res) => {
 router.get("/admin/cards", requirePermission("digital_cards.manage"), async (_req, res) => {
   try {
     const result = await query(`SELECT c.id,c.user_id,c.public_id,c.title,c.status,c.created_at,c.trial_ends_at,u.name,u.lname,u.phone
-      FROM digital_cards c JOIN users u ON u.id=c.user_id ORDER BY c.created_at DESC LIMIT 500`);
+      FROM digital_cards c JOIN users u ON u.id=c.user_id WHERE c.deleted_at IS NULL ORDER BY c.created_at DESC LIMIT 500`);
     res.json({ cards: result.rows });
   } catch (error) { res.status(500).json({ message: "فهرست کارت‌ها در دسترس نیست" }); }
 });

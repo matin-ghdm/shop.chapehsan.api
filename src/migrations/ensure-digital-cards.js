@@ -18,6 +18,7 @@ async function ensureDigitalCards() {
     )
   `);
   await query(`ALTER TABLE digital_cards ADD COLUMN IF NOT EXISTS access_exempt BOOLEAN NOT NULL DEFAULT FALSE`);
+  await query(`ALTER TABLE digital_cards ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`);
   await query(`CREATE INDEX IF NOT EXISTS digital_cards_user_idx ON digital_cards(user_id, created_at DESC)`);
   await query(`
     CREATE TABLE IF NOT EXISTS digital_card_subscriptions (

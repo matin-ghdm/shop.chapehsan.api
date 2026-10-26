@@ -189,6 +189,7 @@ async function startServer() {
   console.log(`Server listening on http://localhost:${PORT}`);
   console.log(`Swagger UI: http://localhost:${PORT}/api-docs`);
   require("./services/telegram-bot").startTelegramBot();
+  require("./services/digital-card-notifications").startDigitalCardNotificationWorker();
   try {
     const { ensureOrderPaymentColumns } = require("./migrations/ensure-order-payments");
     await ensureOrderPaymentColumns();

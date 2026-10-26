@@ -42,11 +42,14 @@ router.post("/zibal/request", authenticate, async (req, res) => {
 
     const digital = await query('SELECT amount FROM download_purchases WHERE order_id=$1',[order.id]);
     const cardSubscription = await query('SELECT amount FROM digital_card_subscriptions WHERE order_id=$1',[order.id]);
-    if (digital.rowCount && cardSubscription.rowCount) throw httpError('نوع سفارش دیجیتال نامعتبر است');
+    const cardTemplate = await query('SELECT amount FROM digital_card_template_purchases WHERE order_id=$1',[order.id]);
+    if ([digital, cardSubscription, cardTemplate].filter((item) => item.rowCount).length > 1) throw httpError('نوع سفارش دیجیتال نامعتبر است');
     if (digital.rowCount && process.env.NODE_ENV==='production' && (!process.env.ZIBAL_MERCHANT || process.env.ZIBAL_MERCHANT==='zibal')) throw httpError('درگاه واقعی خرید فایل هنوز تنظیم نشده است',503,'PAYMENT_CONFIG');
     if (cardSubscription.rowCount && process.env.NODE_ENV==='production' && (!process.env.ZIBAL_MERCHANT || process.env.ZIBAL_MERCHANT==='zibal')) throw httpError('درگاه واقعی کارت دیجیتال هنوز تنظیم نشده است',503,'PAYMENT_CONFIG');
+    if (cardTemplate.rowCount && process.env.NODE_ENV==='production' && (!process.env.ZIBAL_MERCHANT || process.env.ZIBAL_MERCHANT==='zibal')) throw httpError('درگاه خرید قالب هنوز تنظیم نشده است',503,'PAYMENT_CONFIG');
     if (digital.rowCount && Number(digital.rows[0].amount)!==Number(order.total_price)) throw httpError('مبلغ سفارش فایل نامعتبر است');
     if (cardSubscription.rowCount && Number(cardSubscription.rows[0].amount)!==Number(order.total_price)) throw httpError('مبلغ سفارش اشتراک نامعتبر است');
+    if (cardTemplate.rowCount && Number(cardTemplate.rows[0].amount)!==Number(order.total_price)) throw httpError('مبلغ سفارش قالب نامعتبر است');
     const payment = await zibal.requestPayment({
       amountToman: order.total_price,
       orderId: order.id,
@@ -96,7 +99,9 @@ router.post("/zibal/verify", async (req, res) => {
               shipping_fee, rush_fee, payment_track_id, payment_ref_number,
               (SELECT download_id FROM download_purchases WHERE order_id=orders.id) AS download_id,
               (SELECT amount FROM download_purchases WHERE order_id=orders.id) AS digital_amount,
-              (SELECT amount FROM digital_card_subscriptions WHERE order_id=orders.id) AS card_subscription_amount
+              (SELECT amount FROM digital_card_subscriptions WHERE order_id=orders.id) AS card_subscription_amount,
+              (SELECT amount FROM digital_card_template_purchases WHERE order_id=orders.id) AS card_template_amount,
+              (SELECT template FROM digital_card_template_purchases WHERE order_id=orders.id) AS card_template
        FROM orders
        WHERE payment_track_id = $1
        LIMIT 1`,
@@ -105,6 +110,9 @@ router.post("/zibal/verify", async (req, res) => {
     const order = orderResult.rows[0];
     if (!order) {
       throw httpError("سفارش مرتبط با این پرداخت یافت نشد", 404, "NOT_FOUND");
+    }
+    if (order.card_template_amount != null && Number(order.card_template_amount) !== Number(order.total_price)) {
+      throw httpError("مبلغ سفارش قالب با مبلغ پرداخت مطابقت ندارد", 400, "AMOUNT_MISMATCH");
     }
 
     if (order.status === "paid" && order.payment_ref_number) {
@@ -140,7 +148,9 @@ router.post("/zibal/verify", async (req, res) => {
           `SELECT id, user_id, status, total_price, subtotal_price, discount_code, discount_amount,
                   shipping_fee, rush_fee, payment_ref_number,
           (SELECT amount FROM download_purchases WHERE order_id=orders.id) AS digital_amount,
-          (SELECT id FROM digital_card_subscriptions WHERE order_id=orders.id) AS card_subscription_id
+                  (SELECT id FROM digital_card_subscriptions WHERE order_id=orders.id) AS card_subscription_id,
+                  (SELECT card_id FROM digital_card_subscriptions WHERE order_id=orders.id) AS card_subscription_card_id,
+                  (SELECT id FROM digital_card_template_purchases WHERE order_id=orders.id) AS card_template_purchase_id
            FROM orders WHERE id = $1 FOR UPDATE`,
           [order.id],
         );
@@ -180,6 +190,7 @@ router.post("/zibal/verify", async (req, res) => {
           [verify.refNumber ? String(verify.refNumber) : null,
             verify.cardNumber ? String(verify.cardNumber) : null, order.id],
         );
+        await client.query("UPDATE digital_card_template_purchases SET paid_at=COALESCE(paid_at,NOW()) WHERE order_id=$1", [order.id]);
         await client.query(`SELECT c.id FROM digital_cards c
           JOIN digital_card_subscriptions s ON s.card_id=c.id
           WHERE s.order_id=$1 FOR UPDATE OF c`, [order.id]);
@@ -203,6 +214,17 @@ router.post("/zibal/verify", async (req, res) => {
         await client.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [current.user_id]);
         await require("../services/cashback").awardCashback(client, current);
         await client.query("COMMIT");
+        if (current.card_subscription_id && current.card_subscription_card_id) {
+          try {
+            await require("../services/digital-card-notifications").enqueueNotification(
+              current.card_subscription_card_id,
+              "subscription_paid",
+              `subscription_paid_${current.card_subscription_id}`,
+            );
+          } catch (error) {
+            console.error("Could not queue subscription confirmation SMS:", error.message);
+          }
+        }
       } catch (err) {
         await client.query("ROLLBACK");
         throw err;

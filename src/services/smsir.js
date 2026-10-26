@@ -41,6 +41,32 @@ function otpParamName() {
  * @param {string} code - numeric OTP
  */
 async function sendOtp(mobile, code) {
+  return sendTemplate(mobile, templateId(), [
+    { name: otpParamName(), value: String(code) },
+  ]);
+}
+
+/** Send a configured sms.ir Verify template without changing OTP settings. */
+async function sendTemplate(mobile, id, parameters) {
+  const normalizedMobile = String(mobile || "").trim();
+  const normalizedTemplateId = Number(id);
+  if (!/^09\d{9}$/.test(normalizedMobile)) {
+    throw httpError("شمارهٔ مقصد پیامک معتبر نیست", 400, "SMS_INVALID_MOBILE");
+  }
+  if (!Number.isSafeInteger(normalizedTemplateId) || normalizedTemplateId < 1) {
+    throw httpError("شناسهٔ قالب پیامک معتبر نیست", 400, "SMS_CONFIG");
+  }
+  const safeParameters = (Array.isArray(parameters) ? parameters : [])
+    .slice(0, 10)
+    .map((item) => ({
+      name: String(item?.name || "").trim().slice(0, 50),
+      value: String(item?.value ?? "").slice(0, 500),
+    }))
+    .filter((item) => /^[A-Za-z0-9_]+$/.test(item.name));
+  if (!safeParameters.length) {
+    throw httpError("پارامترهای قالب پیامک معتبر نیستند", 400, "SMS_CONFIG");
+  }
+
   const response = await fetch(`${SMSIR_BASE}/send/verify`, {
     method: "POST",
     headers: {
@@ -49,9 +75,9 @@ async function sendOtp(mobile, code) {
       "x-api-key": apiKey(),
     },
     body: JSON.stringify({
-      mobile,
-      templateId: templateId(),
-      parameters: [{ name: otpParamName(), value: String(code) }],
+      mobile: normalizedMobile,
+      templateId: normalizedTemplateId,
+      parameters: safeParameters,
     }),
   });
 
@@ -76,4 +102,5 @@ async function sendOtp(mobile, code) {
 
 module.exports = {
   sendOtp,
+  sendTemplate,
 };

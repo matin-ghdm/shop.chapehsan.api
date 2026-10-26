@@ -165,26 +165,36 @@ app.get("/tables", async (_req, res) => {
 });
 
 async function startServer() {
+  const runMigration = async (name, migrate) => {
+    console.log(`Preparing ${name}...`);
+    try {
+      await migrate();
+    } catch (err) {
+      console.error(`Failed while preparing ${name}:`, err);
+      throw err;
+    }
+  };
+
   const { ensureDesignImagesColumn } = require("./migrations/ensure-design-images");
-  await ensureDesignImagesColumn();
+  await runMigration("design images", ensureDesignImagesColumn);
   const { ensureDesignBannerTextColumn } = require("./migrations/ensure-design-banner-text");
-  await ensureDesignBannerTextColumn();
-  await require("./migrations/ensure-product-options").ensureProductOptions();
-  await require("./migrations/ensure-occasion-calendar").ensureOccasionCalendar();
-  await require("./migrations/ensure-design-updated-at").ensureDesignUpdatedAtColumn();
-  await require("./migrations/ensure-download-management").ensureDownloadManagement();
-  await require("./migrations/ensure-discount-codes").ensureDiscountCodes();
-  await require("./migrations/ensure-wallet").ensureWallet();
-  await require("./migrations/ensure-cashback-settings").ensureCashbackSettings();
-  await require("./migrations/ensure-telegram-bot").ensureTelegramBotTables();
-  await require("./migrations/ensure-laser-requests").ensureLaserRequests();
-  await require("./migrations/ensure-service-requests").ensureServiceRequests();
-  await require("./migrations/ensure-digital-cards").ensureDigitalCards();
-  await require("./migrations/ensure-customer-roles").ensureCustomerRoles();
-  await require("./migrations/ensure-site-analytics").ensureSiteAnalytics();
-  await require("./migrations/ensure-order-delivery-schedule").ensureOrderDeliverySchedule();
-  await require("./migrations/ensure-order-schedule-settings").ensureOrderScheduleSettings();
-  await require("./migrations/ensure-order-invoices").ensureOrderInvoiceColumns();
+  await runMigration("design banner text", ensureDesignBannerTextColumn);
+  await runMigration("product options", () => require("./migrations/ensure-product-options").ensureProductOptions());
+  await runMigration("occasion calendar", () => require("./migrations/ensure-occasion-calendar").ensureOccasionCalendar());
+  await runMigration("design updated_at", () => require("./migrations/ensure-design-updated-at").ensureDesignUpdatedAtColumn());
+  await runMigration("download management", () => require("./migrations/ensure-download-management").ensureDownloadManagement());
+  await runMigration("discount codes", () => require("./migrations/ensure-discount-codes").ensureDiscountCodes());
+  await runMigration("wallet", () => require("./migrations/ensure-wallet").ensureWallet());
+  await runMigration("cashback settings", () => require("./migrations/ensure-cashback-settings").ensureCashbackSettings());
+  await runMigration("Telegram bot", () => require("./migrations/ensure-telegram-bot").ensureTelegramBotTables());
+  await runMigration("laser requests", () => require("./migrations/ensure-laser-requests").ensureLaserRequests());
+  await runMigration("service requests", () => require("./migrations/ensure-service-requests").ensureServiceRequests());
+  await runMigration("digital cards", () => require("./migrations/ensure-digital-cards").ensureDigitalCards());
+  await runMigration("customer roles", () => require("./migrations/ensure-customer-roles").ensureCustomerRoles());
+  await runMigration("site analytics", () => require("./migrations/ensure-site-analytics").ensureSiteAnalytics());
+  await runMigration("order delivery schedule", () => require("./migrations/ensure-order-delivery-schedule").ensureOrderDeliverySchedule());
+  await runMigration("order schedule settings", () => require("./migrations/ensure-order-schedule-settings").ensureOrderScheduleSettings());
+  await runMigration("order invoices", () => require("./migrations/ensure-order-invoices").ensureOrderInvoiceColumns());
   app.listen(PORT, async () => {
   console.log(`Server listening on http://localhost:${PORT}`);
   console.log(`Swagger UI: http://localhost:${PORT}/api-docs`);
@@ -228,6 +238,6 @@ async function startServer() {
 }
 
 startServer().catch((err) => {
-  console.error("Could not prepare design images:", err.message);
+  console.error("Could not prepare application database:", err);
   process.exitCode = 1;
 });

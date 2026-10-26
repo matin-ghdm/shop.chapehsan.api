@@ -440,8 +440,8 @@ router.post("/", async (req, res) => {
       const canPublishUnderPlan = Number(count.rows[0].count) < account.plan.limits.activeCards;
       const cardStatus = isAdmin || (account.subscribed && canPublishUnderPlan) ? "active" : !account.subscribed && !trial.rowCount ? "trial" : "draft";
       const result = await client.query(`INSERT INTO digital_cards(user_id,public_id,title,template,data,status,trial_started_at,trial_ends_at,access_exempt)
-        VALUES($1,$2,$3,$4,'{}'::jsonb,$5,CASE WHEN $6 OR $7 THEN NULL ELSE NOW() END,CASE WHEN $6 OR $7 THEN NULL ELSE NOW()+($8::text||' days')::interval END,$6) RETURNING *`,
-        [req.user.id, crypto.randomBytes(8).toString("base64url"), title, template, cardStatus, isAdmin, account.subscribed || isAdmin, trialDays]);
+        VALUES($1,$2,$3,$4,'{}'::jsonb,$5,CASE WHEN $6 OR $7 OR NOT $9 THEN NULL ELSE NOW() END,CASE WHEN $6 OR $7 OR NOT $9 THEN NULL ELSE NOW()+($8::text||' days')::interval END,$6) RETURNING *`,
+        [req.user.id, crypto.randomBytes(8).toString("base64url"), title, template, cardStatus, isAdmin, account.subscribed || isAdmin, trialDays, cardStatus === "trial"]);
       await client.query("COMMIT");
       if (result.rows[0].trial_started_at) {
         try { await require("../services/digital-card-notifications").enqueueNotification(result.rows[0].id, "trial_started"); }

@@ -7,8 +7,8 @@ const qrCode = require("../lib/qr-code");
 const { TIERS, DEFAULT_PLANS, planSnapshot, planPrice, publicPlans, validateCardDataShape, validateCardData, publicCardData } = require("../services/digital-card-entitlements");
 
 const router = express.Router();
-const templates = new Set(["corporate", "minimal", "luxury", "shop", "medical", "formal-premium"]);
-const freeTemplates = new Set(["corporate", "minimal", "formal-premium"]);
+const templates = new Set(["corporate", "minimal", "luxury", "shop", "medical", "formal-premium", "bright"]);
+const freeTemplates = new Set(["corporate", "minimal", "formal-premium", "bright"]);
 const paidTemplates = [{ id: "luxury", label: "لوکس" }, { id: "shop", label: "فروشگاهی" }, { id: "medical", label: "پزشکی و خدماتی" }];
 const eventTypes = new Set(["view", "mobile", "phone", "map", "messenger", "social", "website", "email"]);
 const clean = (v, max = 500) => String(v ?? "").trim().slice(0, max);
@@ -282,6 +282,7 @@ router.get("/templates", async (req, res) => {
       { id: "corporate", label: "رسمی و شرکتی", free: true, active: true, owned: true, price: 0 },
       { id: "minimal", label: "مینیمال", free: true, active: true, owned: true, price: 0 },
       { id: "formal-premium", label: "رسمی و ممتاز", free: true, active: true, owned: true, price: 0 },
+      { id: "bright", label: "شاد و روشن", free: true, active: true, owned: true, price: 0 },
       ...paidTemplates.map(({ id, label }) => ({ id, label, free: false, active: settings[`template_${id}_active`] === true && Number(settings[`template_${id}_price`]) >= 100, owned: isSiteAdmin(req.user) || ownedTemplates.has(id), price: Number(settings[`template_${id}_price`] || 0) })),
     ] });
   } catch (error) { res.status(500).json({ message: "دریافت قالب‌ها ممکن نشد" }); }

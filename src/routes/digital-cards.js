@@ -648,13 +648,53 @@ router.get("/admin/cards", requirePermission("digital_cards.manage"), async (req
 
 router.get("/admin/subscriptions", requirePermission("digital_cards.manage"), async (_req, res) => {
   try {
-    const result = await query(`SELECT s.id,s.card_id,s.user_id,s.plan_code,s.plan_months,s.amount,s.starts_at,s.ends_at,s.created_at,
-        c.public_id,c.title,u.name,u.lname,u.phone,o.status AS order_status,o.payment_ref_number
+    const result = await query(`SELECT s.id,s.card_id,s.user_id,s.plan_code,s.plan_months,s.amount,s.starts_at,s.ends_at,s.created_at,s.granted_by,
+        c.public_id,c.title,u.name,u.lname,u.phone,o.status AS order_status,o.payment_ref_number,grantor.name AS grantor_name,grantor.lname AS grantor_lname
       FROM digital_card_subscriptions s
       JOIN digital_cards c ON c.id=s.card_id JOIN users u ON u.id=s.user_id
-      LEFT JOIN orders o ON o.id=s.order_id ORDER BY s.created_at DESC LIMIT 500`);
+      LEFT JOIN orders o ON o.id=s.order_id LEFT JOIN users grantor ON grantor.id=s.granted_by ORDER BY s.created_at DESC LIMIT 500`);
     res.json({ subscriptions: result.rows });
   } catch (error) { res.status(500).json({ message: "فهرست اشتراک‌ها در دسترس نیست" }); }
+});
+
+router.post("/admin/grant", requirePermission("digital_cards.manage"), async (req, res) => {
+  const cardId = clean(req.body?.cardId, 50);
+  const tier = clean(req.body?.tier, 20);
+  const months = Number(req.body?.months);
+  if (!cardId || !TIERS.includes(tier) || ![6, 12].includes(months)) return fail(res, 400, "کارت، پلن یا مدت اشتراک معتبر نیست");
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const card = await client.query(`SELECT c.id,c.user_id,c.status,c.public_id,u.role
+      FROM digital_cards c JOIN users u ON u.id=c.user_id
+      WHERE c.id=$1 AND c.deleted_at IS NULL FOR UPDATE OF c`, [cardId]);
+    if (!card.rowCount) { await client.query("ROLLBACK"); return fail(res, 404, "کارت پیدا نشد"); }
+    const ownerId = card.rows[0].user_id;
+    await client.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [ownerId]);
+    const settingsResult = await client.query("SELECT key,value FROM digital_card_settings");
+    const settings = Object.fromEntries(settingsResult.rows.map((row) => [row.key, row.value]));
+    const entitlements = planSnapshot(settings, tier);
+    const inserted = await client.query(`INSERT INTO digital_card_subscriptions
+      (card_id,user_id,plan_months,amount,plan_code,entitlements_snapshot,starts_at,ends_at,granted_by)
+      VALUES($1,$2,$3,0,$4,$5::jsonb,NOW(),NOW()+($3::text||' months')::interval,$6)
+      RETURNING id,starts_at,ends_at`, [cardId, ownerId, months, tier, JSON.stringify(entitlements), req.user.id]);
+
+    const account = await accountEntitlements(ownerId, client.query.bind(client), card.rows[0].role);
+    const active = await client.query(`SELECT COUNT(*)::int AS count FROM digital_cards
+      WHERE user_id=$1 AND status IN ('active','trial') AND deleted_at IS NULL`, [ownerId]);
+    const canPublish = Number(active.rows[0].count) < account.plan.limits.activeCards || ["active", "trial"].includes(card.rows[0].status);
+    const updated = await client.query(`UPDATE digital_cards SET status=CASE WHEN $2 THEN 'active' ELSE status END,updated_at=NOW()
+      WHERE id=$1 RETURNING status`, [cardId, canPublish]);
+    await client.query("COMMIT");
+    res.status(201).json({ granted: true, subscriptionId: inserted.rows[0].id, planCode: tier, months,
+      startsAt: inserted.rows[0].starts_at, endsAt: inserted.rows[0].ends_at, cardStatus: updated.rows[0].status,
+      cardActivated: updated.rows[0].status === "active", planLimitReached: !canPublish });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Admin digital card plan grant failed:", error.message);
+    res.status(500).json({ message: "فعال‌سازی پلن برای کاربر انجام نشد" });
+  } finally { client.release(); }
 });
 
 router.get("/admin/settings", requirePermission("digital_cards.manage"), async (_req, res) => {

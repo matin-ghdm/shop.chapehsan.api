@@ -37,6 +37,7 @@ async function ensureDigitalCards() {
   await query(`CREATE INDEX IF NOT EXISTS digital_card_subscription_card_idx ON digital_card_subscriptions(card_id, ends_at DESC)`);
   await query(`ALTER TABLE digital_card_subscriptions ADD COLUMN IF NOT EXISTS plan_code TEXT NOT NULL DEFAULT 'bronze'`);
   await query(`ALTER TABLE digital_card_subscriptions ADD COLUMN IF NOT EXISTS entitlements_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb`);
+  await query(`ALTER TABLE digital_card_subscriptions ADD COLUMN IF NOT EXISTS granted_by UUID REFERENCES users(id) ON DELETE SET NULL`);
   await query(`UPDATE digital_card_subscriptions SET entitlements_snapshot=$1::jsonb WHERE entitlements_snapshot='{}'::jsonb`, [JSON.stringify({ tier: "bronze", ...DEFAULT_PLANS.bronze })]);
   await query(`CREATE INDEX IF NOT EXISTS digital_card_subscription_user_idx ON digital_card_subscriptions(user_id, ends_at DESC)`);
   await query(`

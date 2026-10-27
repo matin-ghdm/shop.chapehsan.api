@@ -568,7 +568,7 @@ router.get("/:id/subscriptions", async (req, res) => {
   try {
     const owned = await query("SELECT id FROM digital_cards WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL", [req.params.id, req.user.id]);
     if (!owned.rowCount) return fail(res, 404, "کارت پیدا نشد");
-    const result = await query(`SELECT s.id,s.plan_months,s.amount,s.starts_at,s.ends_at,s.created_at,o.id AS order_id,o.status AS order_status,o.payment_ref_number
+    const result = await query(`SELECT s.id,s.plan_code,s.plan_months,s.amount,s.starts_at,s.ends_at,s.created_at,o.id AS order_id,o.status AS order_status,o.payment_ref_number
       FROM digital_card_subscriptions s LEFT JOIN orders o ON o.id=s.order_id WHERE s.card_id=$1 ORDER BY s.created_at DESC`, [req.params.id]);
     res.json({ subscriptions: result.rows });
   } catch (error) { res.status(500).json({ message: "سوابق اشتراک در دسترس نیست" }); }
@@ -585,9 +585,18 @@ router.post("/subscriptions", async (req, res) => {
     const owned = await client.query("SELECT id,public_id FROM digital_cards WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL FOR UPDATE", [cardId, req.user.id]);
     if (!owned.rowCount) { await client.query("ROLLBACK"); return fail(res, 404, "کارت پیدا نشد"); }
     if (isSiteAdmin(req.user)) {
+      const settingsResult = await client.query("SELECT key,value FROM digital_card_settings");
+      const settings = Object.fromEntries(settingsResult.rows.map((row) => [row.key, row.value]));
+      const snapshot = planSnapshot(settings, tier);
+      await client.query(`UPDATE digital_card_subscriptions SET ends_at=NOW()
+        WHERE user_id=$1 AND amount=0 AND order_id IS NULL AND starts_at<=NOW() AND ends_at>NOW()`, [req.user.id]);
+      const subscription = await client.query(`INSERT INTO digital_card_subscriptions
+        (card_id,user_id,plan_months,amount,plan_code,entitlements_snapshot,starts_at,ends_at)
+        VALUES($1,$2,$3,0,$4,$5::jsonb,NOW(),NOW()+($3::text||' months')::interval) RETURNING id,ends_at`,
+      [cardId, req.user.id, months, tier, JSON.stringify(snapshot)]);
       await client.query("UPDATE digital_cards SET access_exempt=TRUE,status='active',updated_at=NOW() WHERE id=$1", [cardId]);
       await client.query("COMMIT");
-      return res.json({ free: true, cardId, status: "active" });
+      return res.json({ free: true, cardId, status: "active", planCode: tier, months, subscriptionId: subscription.rows[0].id, endsAt: subscription.rows[0].ends_at });
     }
     const settings = await getPlanSettings();
     const price = planPrice(settings, tier, months);

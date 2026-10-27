@@ -78,6 +78,7 @@ async function publicCardBySlug(slug) {
   const result = await query(`
     SELECT c.*, COALESCE(s.ends_at, c.trial_ends_at) AS access_ends_at,
       s.plan_code AS access_plan_code,s.entitlements_snapshot AS access_entitlements_snapshot,
+      (SELECT role FROM users WHERE id=c.user_id) AS owner_role,
       (SELECT COUNT(*)::int FROM digital_cards ranked WHERE ranked.user_id=c.user_id AND ranked.deleted_at IS NULL
         AND ranked.status IN ('active','trial') AND (ranked.created_at<c.created_at OR (ranked.created_at=c.created_at AND ranked.id<=c.id))) AS active_card_position,
       (SELECT COUNT(*)::int FROM digital_card_events e WHERE e.card_id=c.id AND e.event_type='view') AS views
@@ -112,7 +113,10 @@ router.get("/public/:slug", async (req, res) => {
     const card = await publicCardBySlug(clean(req.params.slug, 32));
     if (!card) return fail(res, 404, "کارت پیدا نشد");
     if (card.status === "expired") return res.status(410).json({ message: "اعتبار این کارت به پایان رسیده است", expired: true });
-    res.json({ card: { public_id: card.public_id, title: card.title, template: card.template, accent_color: card.accent_color, data: publicCardData(card.data, card.entitlements), views: card.views, access_ends_at: card.access_ends_at, entitlements: card.entitlements } });
+    const publicEntitlements = isSiteAdmin({ role: card.owner_role })
+      ? { ...card.entitlements, limits: { ...card.entitlements.limits, linksPerCard: Number.MAX_SAFE_INTEGER } }
+      : card.entitlements;
+    res.json({ card: { public_id: card.public_id, title: card.title, template: card.template, accent_color: card.accent_color, data: publicCardData(card.data, publicEntitlements), views: card.views, access_ends_at: card.access_ends_at, entitlements: card.entitlements } });
   } catch (error) { console.error("Public digital card failed:", error.message); res.status(500).json({ message: "نمایش کارت ممکن نشد" }); }
 });
 

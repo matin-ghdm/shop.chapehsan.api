@@ -94,9 +94,11 @@ async function publicCardBySlug(slug) {
   const settings = await getPlanSettings();
   const fallback = planSnapshot(settings, card.access_plan_code || "bronze");
   const saved = card.access_entitlements_snapshot;
-  card.entitlements = saved?.limits && saved?.features
-    ? { ...fallback, ...saved, limits: { ...fallback.limits, ...saved.limits }, features: { ...fallback.features, ...saved.features } }
-    : fallback;
+  card.entitlements = isSiteAdmin({ role: card.owner_role })
+    ? planSnapshot(settings, "gold")
+    : saved?.limits && saved?.features
+      ? { ...fallback, ...saved, limits: { ...fallback.limits, ...saved.limits }, features: { ...fallback.features, ...saved.features } }
+      : fallback;
   const withinCardLimit = Number(card.active_card_position) <= card.entitlements.limits.activeCards;
   const permitted = card.access_exempt === true || ((card.status === "active" || card.status === "trial") && withinCardLimit && accessEndsAt && accessEndsAt > new Date());
   return permitted ? card : { ...card, status: "expired", data: null };

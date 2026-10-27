@@ -15,7 +15,7 @@ const options = {
         description: "Local server",
       },
       {
-        url: "https://shop-chapehsan-api.onrender.com",
+        url: "https://shop-chapehsan-api-2ay0.onrender.com",
         description: "Production (Render)",
       },
     ],

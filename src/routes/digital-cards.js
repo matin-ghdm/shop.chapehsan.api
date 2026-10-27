@@ -49,14 +49,15 @@ async function getPlanSettings() {
   return Object.fromEntries(result.rows.map((row) => [row.key, row.value]));
 }
 
-async function accountEntitlements(userId, db = query) {
-  const [settingsResult, subscriptionResult] = await Promise.all([
-    db("SELECT key,value FROM digital_card_settings"),
-    db(`SELECT plan_code,entitlements_snapshot,ends_at FROM digital_card_subscriptions
-      WHERE user_id=$1 AND starts_at IS NOT NULL AND starts_at<=NOW() AND ends_at>NOW()
-      ORDER BY CASE plan_code WHEN 'gold' THEN 3 WHEN 'silver' THEN 2 ELSE 1 END DESC,ends_at DESC,created_at DESC LIMIT 1`, [userId]),
-  ]);
+async function accountEntitlements(userId, db = query, userRole = "") {
+  const settingsResult = await db("SELECT key,value FROM digital_card_settings");
   const settings = Object.fromEntries(settingsResult.rows.map((row) => [row.key, row.value]));
+  if (isSiteAdmin({ role: userRole })) {
+    return { plan: planSnapshot(settings, "gold"), settings, subscribed: true, endsAt: null };
+  }
+  const subscriptionResult = await db(`SELECT plan_code,entitlements_snapshot,ends_at FROM digital_card_subscriptions
+    WHERE user_id=$1 AND starts_at IS NOT NULL AND starts_at<=NOW() AND ends_at>NOW()
+    ORDER BY CASE plan_code WHEN 'gold' THEN 3 WHEN 'silver' THEN 2 ELSE 1 END DESC,ends_at DESC,created_at DESC LIMIT 1`, [userId]);
   const subscription = subscriptionResult.rows[0];
   const fallback = planSnapshot(settings, subscription?.plan_code || "bronze");
   const saved = subscription?.entitlements_snapshot;
@@ -326,7 +327,7 @@ router.post("/templates/purchase", async (req, res) => {
 
 router.get("/mine", async (req, res) => {
   try {
-    const account = await accountEntitlements(req.user.id);
+    const account = await accountEntitlements(req.user.id, query, req.user.role);
     const result = await query(`SELECT c.*,
       COALESCE((SELECT MAX(ends_at) FROM digital_card_subscriptions WHERE user_id=c.user_id AND starts_at IS NOT NULL), c.trial_ends_at) AS access_ends_at,
       (SELECT COUNT(*)::int FROM digital_cards ranked WHERE ranked.user_id=c.user_id AND ranked.deleted_at IS NULL
@@ -385,7 +386,7 @@ router.post("/:id/assets/register", async (req, res) => {
     await client.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [req.user.id]);
     const card = await client.query("SELECT id,data FROM digital_cards WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL FOR UPDATE", [req.params.id, req.user.id]);
     if (!card.rowCount) { await client.query("ROLLBACK"); return fail(res, 404, "کارت پیدا نشد"); }
-    const account = await accountEntitlements(req.user.id, client.query.bind(client));
+    const account = await accountEntitlements(req.user.id, client.query.bind(client), req.user.role);
     const featureCap = kind === "catalog" ? account.plan.limits.catalogsPerCard
       : kind === "gallery" ? account.plan.limits.galleryImagesPerCard
         : kind === "product" ? account.plan.limits.productsPerCard : 1;
@@ -437,7 +438,7 @@ router.post("/", async (req, res) => {
     try {
       await client.query("BEGIN");
       await client.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [req.user.id]);
-      const account = await accountEntitlements(req.user.id, client.query.bind(client));
+      const account = await accountEntitlements(req.user.id, client.query.bind(client), req.user.role);
       const count = await client.query("SELECT COUNT(*)::int AS count FROM digital_cards WHERE user_id=$1 AND status IN ('active','trial') AND deleted_at IS NULL", [req.user.id]);
       if (!isAdmin && !freeTemplates.has(template)) {
         if (account.plan.features.allTemplates) {
@@ -475,7 +476,7 @@ router.post("/:id/activate", async (req, res) => {
     await client.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [req.user.id]);
     const card = await client.query("SELECT id,status FROM digital_cards WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL FOR UPDATE", [req.params.id, req.user.id]);
     if (!card.rowCount) { await client.query("ROLLBACK"); return fail(res, 404, "کارت پیدا نشد"); }
-    const account = await accountEntitlements(req.user.id, client.query.bind(client));
+    const account = await accountEntitlements(req.user.id, client.query.bind(client), req.user.role);
     if (!isSiteAdmin(req.user) && !account.subscribed) { await client.query("ROLLBACK"); return fail(res, 402, "برای انتشار کارت، پلن فعال تهیه کنید"); }
     const active = await client.query("SELECT COUNT(*)::int AS count FROM digital_cards WHERE user_id=$1 AND status IN ('active','trial') AND deleted_at IS NULL", [req.user.id]);
     if (!isSiteAdmin(req.user) && Number(active.rows[0].count) >= account.plan.limits.activeCards && card.rows[0].status !== "active") {
@@ -503,7 +504,7 @@ router.put("/:id", async (req, res) => {
   try {
     const owned = await query("SELECT id,data FROM digital_cards WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL", [req.params.id, req.user.id]);
     if (!owned.rowCount) return fail(res, 404, "کارت پیدا نشد");
-    const account = await accountEntitlements(req.user.id);
+    const account = await accountEntitlements(req.user.id, query, req.user.role);
     if (!isSiteAdmin(req.user)) {
       const quotaErrors = validateCardData(data, owned.rows[0].data || {}, account.plan);
       if (quotaErrors.length) return res.status(403).json({ message: "این تغییر از سقف پلن شما بیشتر است", limits: quotaErrors });
@@ -546,7 +547,7 @@ router.get("/:id/stats", async (req, res) => {
   try {
     const owned = await query("SELECT id FROM digital_cards WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL", [req.params.id, req.user.id]);
     if (!owned.rowCount) return fail(res, 404, "کارت پیدا نشد");
-    const account = await accountEntitlements(req.user.id);
+    const account = await accountEntitlements(req.user.id, query, req.user.role);
     if (!account.plan.features.fullAnalytics) {
       const result = await query(`SELECT 'view' AS event_type,COUNT(*)::int AS count FROM digital_card_events WHERE card_id=$1 AND event_type='view'`, [req.params.id]);
       return res.json({ events: result.rows, daily: [], monthly: [], detailedAvailable: false });
@@ -585,18 +586,9 @@ router.post("/subscriptions", async (req, res) => {
     const owned = await client.query("SELECT id,public_id FROM digital_cards WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL FOR UPDATE", [cardId, req.user.id]);
     if (!owned.rowCount) { await client.query("ROLLBACK"); return fail(res, 404, "کارت پیدا نشد"); }
     if (isSiteAdmin(req.user)) {
-      const settingsResult = await client.query("SELECT key,value FROM digital_card_settings");
-      const settings = Object.fromEntries(settingsResult.rows.map((row) => [row.key, row.value]));
-      const snapshot = planSnapshot(settings, tier);
-      await client.query(`UPDATE digital_card_subscriptions SET ends_at=NOW()
-        WHERE user_id=$1 AND amount=0 AND order_id IS NULL AND starts_at<=NOW() AND ends_at>NOW()`, [req.user.id]);
-      const subscription = await client.query(`INSERT INTO digital_card_subscriptions
-        (card_id,user_id,plan_months,amount,plan_code,entitlements_snapshot,starts_at,ends_at)
-        VALUES($1,$2,$3,0,$4,$5::jsonb,NOW(),NOW()+($3::text||' months')::interval) RETURNING id,ends_at`,
-      [cardId, req.user.id, months, tier, JSON.stringify(snapshot)]);
       await client.query("UPDATE digital_cards SET access_exempt=TRUE,status='active',updated_at=NOW() WHERE id=$1", [cardId]);
       await client.query("COMMIT");
-      return res.json({ free: true, cardId, status: "active", planCode: tier, months, subscriptionId: subscription.rows[0].id, endsAt: subscription.rows[0].ends_at });
+      return res.json({ free: true, cardId, status: "active", planCode: "gold" });
     }
     const settings = await getPlanSettings();
     const price = planPrice(settings, tier, months);

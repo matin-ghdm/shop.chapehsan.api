@@ -326,11 +326,19 @@ router.get("/mine", async (req, res) => {
       COALESCE((SELECT MAX(ends_at) FROM digital_card_subscriptions WHERE user_id=c.user_id AND starts_at IS NOT NULL), c.trial_ends_at) AS access_ends_at,
       (SELECT COUNT(*)::int FROM digital_cards ranked WHERE ranked.user_id=c.user_id AND ranked.deleted_at IS NULL
         AND ranked.status IN ('active','trial') AND (ranked.created_at<c.created_at OR (ranked.created_at=c.created_at AND ranked.id<=c.id))) AS active_card_position,
+      (SELECT COUNT(*)::int FROM digital_cards live WHERE live.user_id=c.user_id AND live.deleted_at IS NULL AND live.status IN ('active','trial')) AS live_card_count,
+      EXISTS(SELECT 1 FROM digital_cards prior WHERE prior.user_id=c.user_id AND prior.trial_started_at IS NOT NULL AND prior.id<>c.id) AS prior_trial_used,
       (SELECT COUNT(*)::int FROM digital_card_events WHERE card_id=c.id AND event_type='view') AS views
       FROM digital_cards c WHERE c.user_id=$1 AND c.deleted_at IS NULL ORDER BY c.created_at DESC`, [req.user.id]);
     const assets = await query(`SELECT COALESCE(SUM(size_bytes),0)::bigint AS used_bytes,
         COALESCE(jsonb_agg(blob_url), '[]'::jsonb) AS urls FROM digital_card_assets WHERE user_id=$1`, [req.user.id]);
-    const cards = result.rows.map((card) => ({ ...card, over_plan_limit: ["active", "trial"].includes(card.status) && Number(card.active_card_position) > account.plan.limits.activeCards }));
+    const cards = result.rows.map((card) => {
+      const overPlanLimit = ["active", "trial"].includes(card.status) && Number(card.active_card_position) > account.plan.limits.activeCards;
+      const draftReason = card.status !== "draft" ? null
+        : account.subscribed && Number(card.live_card_count) >= account.plan.limits.activeCards ? "plan_limit"
+          : !account.subscribed && card.prior_trial_used ? "trial_used" : "activation_required";
+      return { ...card, over_plan_limit: overPlanLimit, draft_reason: draftReason };
+    });
     res.json({ cards, entitlements: account.plan, subscriptionEndsAt: account.endsAt, storageUsedBytes: Number(assets.rows[0].used_bytes || 0), registeredAssetUrls: assets.rows[0].urls });
   } catch (error) { res.status(500).json({ message: "دریافت کارت‌ها ممکن نشد" }); }
 });
@@ -439,6 +447,9 @@ router.post("/", async (req, res) => {
       const trialDays = Math.max(1, Math.min(30, Number(account.settings.trial_days ?? 7)));
       const canPublishUnderPlan = Number(count.rows[0].count) < account.plan.limits.activeCards;
       const cardStatus = isAdmin || (account.subscribed && canPublishUnderPlan) ? "active" : !account.subscribed && !trial.rowCount ? "trial" : "draft";
+      const draftReason = cardStatus !== "draft" ? null
+        : account.subscribed && !canPublishUnderPlan ? "plan_limit"
+          : !account.subscribed && trial.rowCount ? "trial_used" : "activation_required";
       const result = await client.query(`INSERT INTO digital_cards(user_id,public_id,title,template,data,status,trial_started_at,trial_ends_at,access_exempt)
         VALUES($1,$2,$3,$4,'{}'::jsonb,$5,CASE WHEN $6 OR $7 OR NOT $9 THEN NULL ELSE NOW() END,CASE WHEN $6 OR $7 OR NOT $9 THEN NULL ELSE NOW()+($8::text||' days')::interval END,$6) RETURNING *`,
         [req.user.id, crypto.randomBytes(8).toString("base64url"), title, template, cardStatus, isAdmin, account.subscribed || isAdmin, trialDays, cardStatus === "trial"]);
@@ -447,7 +458,7 @@ router.post("/", async (req, res) => {
         try { await require("../services/digital-card-notifications").enqueueNotification(result.rows[0].id, "trial_started"); }
         catch (error) { console.error("Could not queue trial-start SMS:", error.message); }
       }
-      return res.status(201).json({ card: result.rows[0] });
+      return res.status(201).json({ card: { ...result.rows[0], draft_reason: draftReason } });
     } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
   } catch (error) { console.error("Create digital card failed:", error.message); res.status(500).json({ message: "ساخت کارت ممکن نشد" }); }
 });

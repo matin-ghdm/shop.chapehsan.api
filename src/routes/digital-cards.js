@@ -4,6 +4,7 @@ const { pool, query } = require("../db");
 const { authenticate } = require("../middleware/auth");
 const { requirePermission } = require("../lib/panel-permissions");
 const qrCode = require("../lib/qr-code");
+const { formatWorkSchedule } = require("../lib/digital-card-hours");
 const { TIERS, DEFAULT_PLANS, planSnapshot, planPrice, publicPlans, validateCardDataShape, validateCardData, publicCardData } = require("../services/digital-card-entitlements");
 
 const router = express.Router();
@@ -179,8 +180,7 @@ router.get("/public/:slug/vcf", async (req, res) => {
       notes.push(`${clean(address.label || "نشانی", 80)}: ${address.value}${address.postalCode ? ` · کدپستی: ${address.postalCode}` : ""}`);
     }
     if (d.bio) notes.push(`معرفی: ${clean(d.bio, 1000)}`);
-    const hoursSchedule = Array.isArray(d.hoursSchedule) ? d.hoursSchedule.filter((day) => day?.enabled && day.day && day.open && day.close) : [];
-    const formattedHours = hoursSchedule.map((day) => `${clean(day.day, 20)}: ${clean(day.open, 5)} تا ${clean(day.close, 5)}`).join(" · ");
+    const formattedHours = formatWorkSchedule(d.hoursSchedule);
     if (formattedHours || d.hours) notes.push(`ساعات کاری: ${formattedHours || clean(d.hours, 300)}`);
 
     const urls = new Set();

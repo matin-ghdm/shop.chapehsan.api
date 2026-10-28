@@ -1,3 +1,4 @@
+const { workScheduleError } = require("../lib/digital-card-hours");
 const TIERS = ["bronze", "silver", "gold"];
 
 const DEFAULT_PLANS = {
@@ -92,6 +93,7 @@ function validateCardDataShape(data = {}) {
       errors.push({ field: key, reason: "item_too_long" });
     }
   }
+  if (workScheduleError(data.hoursSchedule)) errors.push({ field: "hoursSchedule", reason: "incomplete_or_invalid_hours" });
   return errors;
 }
 

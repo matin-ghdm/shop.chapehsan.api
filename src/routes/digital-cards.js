@@ -677,7 +677,7 @@ router.post("/admin/grant", requirePermission("digital_cards.manage"), async (re
     const entitlements = planSnapshot(settings, tier);
     const inserted = await client.query(`INSERT INTO digital_card_subscriptions
       (card_id,user_id,plan_months,amount,plan_code,entitlements_snapshot,starts_at,ends_at,granted_by)
-      VALUES($1,$2,$3,0,$4,$5::jsonb,NOW(),NOW()+($3::text||' months')::interval,$6)
+      VALUES($1,$2,$3::integer,0,$4,$5::jsonb,NOW(),NOW()+make_interval(months => $3::integer),$6)
       RETURNING id,starts_at,ends_at`, [cardId, ownerId, months, tier, JSON.stringify(entitlements), req.user.id]);
 
     const account = await accountEntitlements(ownerId, client.query.bind(client), card.rows[0].role);

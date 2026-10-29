@@ -70,8 +70,12 @@ async function accountEntitlements(userId, db = query, userRole = "") {
 
 function accountAssetUrls(data = {}) {
   const urls = [data.logo, data.portrait, data.cover, data.catalog];
-  for (const item of [...(Array.isArray(data.catalogs) ? data.catalogs : []), ...(Array.isArray(data.gallery) ? data.gallery : []), ...(Array.isArray(data.products) ? data.products : [])]) {
-    if (item && typeof item === "object") urls.push(item.url, item.image);
+  for (const item of [...(Array.isArray(data.catalogs) ? data.catalogs : []), ...(Array.isArray(data.gallery) ? data.gallery : [])]) {
+    if (item && typeof item === "object") urls.push(item.url);
+  }
+  // A product URL is an external order link, not an uploaded asset.
+  for (const item of Array.isArray(data.products) ? data.products : []) {
+    if (item && typeof item === "object") urls.push(item.image);
   }
   return [...new Set(urls.filter((value) => typeof value === "string" && value.startsWith("https://")))];
 }

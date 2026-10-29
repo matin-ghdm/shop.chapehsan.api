@@ -46,8 +46,9 @@ router.post("/", async (req, res) => {
   const neededBy = clean(body.needed_by, 40);
   const artworkNote = clean(body.artwork_note, 1500);
   const attachments = parseRequestAttachments(body.attachments);
+  if (attachments === null) return res.status(400).json({ message: "پیوست‌ها معتبر نیستند؛ حداکثر ۳ فایل، تصاویر تا ۳ مگابایت و سایر فایل‌ها تا ۱۵ مگابایت پذیرفته می‌شوند.", code: "INVALID_ATTACHMENTS" });
 
-  if (!VALID_SERVICES.has(service) || customerName.length < 2 || !/^\+?\d{10,15}$/.test(phone) || !material || itemDescription.length < 4 || !Number.isInteger(quantity) || quantity < 1 || quantity > 100000 || !VALID_MATERIAL_OWNERS.has(materialProvidedBy) || attachments === null) {
+  if (!VALID_SERVICES.has(service) || customerName.length < 2 || !/^\+?\d{10,15}$/.test(phone) || !material || itemDescription.length < 4 || !Number.isInteger(quantity) || quantity < 1 || quantity > 100000 || !VALID_MATERIAL_OWNERS.has(materialProvidedBy)) {
     return res.status(400).json({ message: "لطفاً اطلاعات ضروری سفارش را کامل و درست وارد کنید", code: "VALIDATION_ERROR" });
   }
 

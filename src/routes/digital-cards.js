@@ -384,6 +384,9 @@ router.post("/:id/assets/register", async (req, res) => {
     contentType = String(response.headers.get("content-type") || "").split(";")[0].toLowerCase();
   } catch { return fail(res, 400, "بررسی فایل بارگذاری‌شده انجام نشد"); }
   const imageType = ["image/jpeg", "image/png", "image/webp"].includes(contentType);
+  if (imageType && fileSize > 3 * 1024 * 1024) {
+    return fail(res, 413, "حداکثر حجم هر تصویر ۳ مگابایت است؛ تصویر را کوچک یا فشرده کنید و دوباره بارگذاری کنید.");
+  }
   if (!Number.isSafeInteger(fileSize) || fileSize <= 0 || fileSize > 20 * 1024 * 1024 || (kind === "catalog" ? contentType !== "application/pdf" : !imageType)) {
     return fail(res, 400, "نوع یا اندازه فایل پذیرفته نیست");
   }

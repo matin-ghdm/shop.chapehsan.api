@@ -36,11 +36,12 @@ router.post("/", async (req, res) => {
   const quantity = Number(body.quantity || 1);
   const details = clean(body.details, 3000);
   const attachments = parseRequestAttachments(body.attachments);
+  if (attachments === null) return res.status(400).json({ message: "پیوست‌ها معتبر نیستند؛ حداکثر ۳ فایل، تصاویر تا ۳ مگابایت و سایر فایل‌ها تا ۱۵ مگابایت پذیرفته می‌شوند.", code: "INVALID_ATTACHMENTS" });
   const productCode = clean(body.product_code, 80);
   const productType = clean(body.product_type, 40);
   const productSelection = body.product_selection || null;
 
-  if (!serviceSlug || !serviceLabel || customerName.length < 2 || !/^\+?\d{10,15}$/.test(phone) || itemDescription.length < 3 || !Number.isInteger(quantity) || quantity < 1 || quantity > 100000 || attachments === null) {
+  if (!serviceSlug || !serviceLabel || customerName.length < 2 || !/^\+?\d{10,15}$/.test(phone) || itemDescription.length < 3 || !Number.isInteger(quantity) || quantity < 1 || quantity > 100000) {
     return res.status(400).json({ message: "لطفاً اطلاعات ضروری درخواست را کامل و درست وارد کنید", code: "VALIDATION_ERROR" });
   }
 

@@ -8,9 +8,10 @@ const { formatWorkSchedule } = require("../lib/digital-card-hours");
 const { TIERS, DEFAULT_PLANS, planSnapshot, planPrice, publicPlans, validateCardDataShape, validateCardData, publicCardData } = require("../services/digital-card-entitlements");
 
 const router = express.Router();
-const templates = new Set(["corporate", "minimal", "luxury", "shop", "medical", "formal-premium", "bright", "smart", "orbit", "ribbon", "studio"]);
-const freeTemplates = new Set(["corporate", "minimal", "formal-premium", "bright", "smart", "orbit", "ribbon", "studio"]);
-const paidTemplates = [{ id: "luxury", label: "لوکس" }, { id: "shop", label: "فروشگاهی" }, { id: "medical", label: "پزشکی و خدماتی" }];
+const { TEMPLATE_CATALOG, isTemplateEnabled, canSelectTemplate, adminTemplates, validateTemplateUpdates } = require("../services/digital-card-templates");
+const templates = new Set(TEMPLATE_CATALOG.map((item) => item.id));
+const freeTemplates = new Set(TEMPLATE_CATALOG.filter((item) => item.free).map((item) => item.id));
+const paidTemplates = TEMPLATE_CATALOG.filter((item) => !item.free);
 const eventTypes = new Set(["view", "mobile", "phone", "map", "messenger", "social", "website", "email"]);
 const clean = (v, max = 500) => String(v ?? "").trim().slice(0, max);
 const fail = (res, status, message) => res.status(status).json({ message });
@@ -285,17 +286,14 @@ router.get("/templates", async (req, res) => {
     const owned = await query(`SELECT template FROM digital_card_template_purchases WHERE user_id=$1 AND paid_at IS NOT NULL
       UNION SELECT template FROM digital_cards WHERE user_id=$1 AND template IN ('luxury','shop','medical')`, [req.user.id]);
     const ownedTemplates = new Set(owned.rows.map((row) => row.template));
-    res.json({ templates: [
-      { id: "corporate", label: "رسمی و شرکتی", free: true, active: true, owned: true, price: 0 },
-      { id: "minimal", label: "مینیمال", free: true, active: true, owned: true, price: 0 },
-      { id: "formal-premium", label: "رسمی و ممتاز", free: true, active: true, owned: true, price: 0 },
-      { id: "bright", label: "شاد و روشن", free: true, active: true, owned: true, price: 0 },
-      { id: "ribbon", label: "ریبون · ستون رنگی", free: true, active: true, owned: true, price: 0 },
-      { id: "studio", label: "استودیو · سفید و سبزآبی", free: true, active: true, owned: true, price: 0 },
-      { id: "orbit", label: "اوربیت · تم گوشی", free: true, active: true, owned: true, price: 0 },
-      { id: "smart", label: "اسمارت · سفید و لیمویی", free: true, active: true, owned: true, price: 0 },
-      ...paidTemplates.map(({ id, label }) => ({ id, label, free: false, active: settings[`template_${id}_active`] === true && Number(settings[`template_${id}_price`]) >= 100, owned: isSiteAdmin(req.user) || ownedTemplates.has(id), price: Number(settings[`template_${id}_price`] || 0) })),
-    ] });
+    res.set("Cache-Control", "no-store").json({ templates: TEMPLATE_CATALOG.map((item) => {
+      const enabled = isTemplateEnabled(settings, item.id);
+      return { ...item, enabled,
+        active: enabled && (item.free || (settings["template_" + item.id + "_active"] === true && Number(settings["template_" + item.id + "_price"]) >= 100)),
+        owned: item.free || isSiteAdmin(req.user) || ownedTemplates.has(item.id),
+        price: item.free ? 0 : Number(settings["template_" + item.id + "_price"] || 0),
+      };
+    }) });
   } catch (error) { res.status(500).json({ message: "دریافت قالب‌ها ممکن نشد" }); }
 });
 
@@ -308,7 +306,7 @@ router.post("/templates/purchase", async (req, res) => {
   try {
     const settings = await getPlanSettings();
     const amount = Number(settings[`template_${template}_price`]);
-    if (settings[`template_${template}_active`] !== true || !Number.isSafeInteger(amount) || amount < 100) return fail(res, 503, "فروش این قالب در حال حاضر فعال نیست");
+    if (!isTemplateEnabled(settings, template) || settings[`template_${template}_active`] !== true || !Number.isSafeInteger(amount) || amount < 100) return fail(res, 503, "فروش این قالب در حال حاضر فعال نیست");
     client = await pool.connect();
     await client.query("BEGIN");
     await client.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [req.user.id]);
@@ -452,6 +450,7 @@ router.post("/", async (req, res) => {
       await client.query("BEGIN");
       await client.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [req.user.id]);
       const account = await accountEntitlements(req.user.id, client.query.bind(client), req.user.role);
+      if (!isTemplateEnabled(account.settings, template)) { await client.query("ROLLBACK"); return fail(res, 409, "این قالب توسط مدیر غیرفعال شده است؛ قالب دیگری انتخاب کنید."); }
       const count = await client.query("SELECT COUNT(*)::int AS count FROM digital_cards WHERE user_id=$1 AND status IN ('active','trial') AND deleted_at IS NULL", [req.user.id]);
       if (!isAdmin && !freeTemplates.has(template)) {
         if (account.plan.features.allTemplates) {
@@ -515,9 +514,10 @@ router.put("/:id", async (req, res) => {
   if (!templates.has(template) || !/^#[0-9a-fA-F]{6}$/.test(color)) return fail(res, 400, "ظاهر کارت معتبر نیست");
   const title = clean([data.firstName, data.lastName].filter(Boolean).join(" ") || req.body?.title || "کارت دیجیتال", 120);
   try {
-    const owned = await query("SELECT id,data FROM digital_cards WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL", [req.params.id, req.user.id]);
+    const owned = await query("SELECT id,data,template FROM digital_cards WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL", [req.params.id, req.user.id]);
     if (!owned.rowCount) return fail(res, 404, "کارت پیدا نشد");
     const account = await accountEntitlements(req.user.id, query, req.user.role);
+    if (!canSelectTemplate(account.settings, template, owned.rows[0].template)) return fail(res, 409, "این قالب توسط مدیر غیرفعال شده است؛ قالب دیگری انتخاب کنید.");
     if (!isSiteAdmin(req.user)) {
       const quotaErrors = validateCardData(data, owned.rows[0].data || {}, account.plan);
       if (quotaErrors.length) return res.status(403).json({ message: "این تغییر از سقف پلن شما بیشتر است", limits: quotaErrors });
@@ -706,6 +706,32 @@ router.post("/admin/grant", requirePermission("digital_cards.manage"), async (re
     console.error("Admin digital card plan grant failed:", error.message);
     res.status(500).json({ message: "فعال‌سازی پلن برای کاربر انجام نشد" });
   } finally { client.release(); }
+});
+
+router.get("/admin/templates", requirePermission("digital_cards.manage"), async (_req, res) => {
+  try { res.set("Cache-Control", "no-store").json({ templates: adminTemplates(await getPlanSettings()) }); }
+  catch { res.status(500).json({ message: "دریافت وضعیت قالب‌ها ممکن نشد." }); }
+});
+
+router.put("/admin/templates", requirePermission("digital_cards.manage"), async (req, res) => {
+  const updates = req.body?.templates;
+  if (!validateTemplateUpdates(updates)) return fail(res, 400, "فهرست قالب‌ها معتبر نیست؛ وضعیت هر قالب باید فعال یا غیرفعال باشد.");
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query("BEGIN");
+    for (const item of updates) {
+      await client.query(`INSERT INTO digital_card_settings(key,value) VALUES($1,$2::jsonb)
+        ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()`, [`template_${item.id}_enabled`, JSON.stringify(item.enabled)]);
+    }
+    const result = await client.query("SELECT key,value FROM digital_card_settings");
+    await client.query("COMMIT");
+    const settings = Object.fromEntries(result.rows.map((row) => [row.key, row.value]));
+    res.json({ templates: adminTemplates(settings) });
+  } catch {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    res.status(500).json({ message: "ذخیره وضعیت قالب‌ها انجام نشد؛ دوباره تلاش کنید." });
+  } finally { client?.release(); }
 });
 
 router.get("/admin/settings", requirePermission("digital_cards.manage"), async (_req, res) => {

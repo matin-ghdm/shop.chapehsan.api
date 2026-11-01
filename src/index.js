@@ -194,6 +194,7 @@ async function startServer() {
   await runMigration("site analytics", () => require("./migrations/ensure-site-analytics").ensureSiteAnalytics());
   await runMigration("order delivery schedule", () => require("./migrations/ensure-order-delivery-schedule").ensureOrderDeliverySchedule());
   await runMigration("order schedule settings", () => require("./migrations/ensure-order-schedule-settings").ensureOrderScheduleSettings());
+  await runMigration("order cancellation", () => require("./migrations/ensure-order-cancellation").ensureOrderCancellation());
   await runMigration("order invoices", () => require("./migrations/ensure-order-invoices").ensureOrderInvoiceColumns());
   app.listen(PORT, async () => {
   console.log(`Server listening on http://localhost:${PORT}`);

@@ -13,7 +13,7 @@ const ORDER_STATUSES = [
 ];
 
 const ORDER_COLUMNS =
-  "id, user_id, address_id, is_pickup, status, total_price, subtotal_price, discount_code, discount_amount, shipping_fee, rush_order, rush_fee, delivery_date, delivery_time, next_business_day_confirmed, wallet_amount, amount_before_wallet, note, created_at, payment_track_id, payment_ref_number, payment_card_number, paid_at, invoice_type, invoice_name, invoice_national_id, invoice_economic_code, invoice_registration_number, invoice_phone, invoice_address, invoice_postal_code, invoice_issued_at";
+  "id, user_id, address_id, is_pickup, status, total_price, subtotal_price, discount_code, discount_amount, shipping_fee, rush_order, rush_fee, delivery_date, delivery_time, next_business_day_confirmed, wallet_amount, amount_before_wallet, note, created_at, payment_track_id, payment_ref_number, payment_card_number, paid_at, invoice_type, invoice_name, invoice_national_id, invoice_economic_code, invoice_registration_number, invoice_phone, invoice_address, invoice_postal_code, invoice_issued_at, canceled_by";
 
 const INVOICE_FIELDS = [
   "invoice_type",
@@ -652,7 +652,7 @@ async function createOrder(payload, currentUser) {
   }
 }
 
-async function updateOrder(id, payload) {
+async function updateOrder(id, payload, options = {}) {
   const digital = await query('SELECT 1 FROM download_purchases WHERE order_id=$1',[id]);
   if (digital.rowCount) throw httpError('سفارش فایل دیجیتال قابل تغییر نیست',403);
   const current = await findById(id);
@@ -708,6 +708,8 @@ async function updateOrder(id, payload) {
 
   values.push(id);
   if (payload.status === "canceled") {
+    fields.push(`canceled_by = COALESCE(canceled_by, $${i++})`);
+    values.splice(values.length - 1, 0, options.customerId ? "customer" : "admin");
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -717,6 +719,12 @@ async function updateOrder(id, payload) {
       );
       const lockedOrder = locked.rows[0];
       if (!lockedOrder) throw httpError("سفارش پیدا نشد", 404, "NOT_FOUND");
+      if (options.customerId) {
+        if (lockedOrder.user_id !== options.customerId) throw httpError("دسترسی غیرمجاز", 403, "FORBIDDEN");
+        if (lockedOrder.status !== "canceled" && (lockedOrder.status !== "awaiting_payment" || lockedOrder.paid_at)) {
+          throw httpError("فقط سفارش پرداخت‌نشده قابل لغو توسط مشتری است", 409, "ORDER_NOT_CANCELABLE");
+        }
+      }
       const result = await client.query(
         `UPDATE orders SET ${fields.join(", ")} WHERE id = $${i}
          RETURNING ${ORDER_COLUMNS}`,

@@ -94,6 +94,15 @@ router.put("/:id/invoice", async (req, res) => {
   }
 });
 
+router.post("/:id/cancel-by-customer", async (req, res) => {
+  try {
+    const order = await ordersService.updateOrder(req.params.id, { status: "canceled" }, { customerId: req.user.id });
+    res.json({ order });
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.message || "لغو سفارش ناموفق بود", code: err.code });
+  }
+});
+
 router.put("/:id", async (req, res) => {
   try {
     if (!hasPermission(req.user, "orders.manage")) {

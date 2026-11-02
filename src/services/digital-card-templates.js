@@ -11,9 +11,9 @@ const TEMPLATE_CATALOG = [
   { id: "shop", label: "فروشگاهی", free: false },
   { id: "medical", label: "پزشکی و خدماتی", free: false },
 ];
-const isTemplateEnabled = (settings, id) => TEMPLATE_CATALOG.some((item) => item.id === id) && settings[`template_${id}_enabled`] !== false;
+const isTemplateEnabled = (settings, id) => TEMPLATE_CATALOG.some((item) => item.id === id) && settings[`template_${id}_deleted`] !== true && settings[`template_${id}_enabled`] !== false;
 const canSelectTemplate = (settings, id, currentTemplate) => id === currentTemplate || isTemplateEnabled(settings, id);
-const adminTemplates = (settings) => TEMPLATE_CATALOG.map((item) => ({ ...item, enabled: isTemplateEnabled(settings, item.id) }));
+const adminTemplates = (settings) => TEMPLATE_CATALOG.filter((item) => settings[`template_${item.id}_deleted`] !== true).map((item) => ({ ...item, enabled: isTemplateEnabled(settings, item.id) }));
 function validateTemplateUpdates(items) {
   if (!Array.isArray(items) || !items.length || items.length > TEMPLATE_CATALOG.length) return false;
   const seen = new Set();

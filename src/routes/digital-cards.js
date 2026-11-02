@@ -286,7 +286,7 @@ router.get("/templates", async (req, res) => {
     const owned = await query(`SELECT template FROM digital_card_template_purchases WHERE user_id=$1 AND paid_at IS NOT NULL
       UNION SELECT template FROM digital_cards WHERE user_id=$1 AND template IN ('luxury','shop','medical')`, [req.user.id]);
     const ownedTemplates = new Set(owned.rows.map((row) => row.template));
-    res.set("Cache-Control", "no-store").json({ templates: TEMPLATE_CATALOG.map((item) => {
+    res.set("Cache-Control", "no-store").json({ templates: TEMPLATE_CATALOG.filter((item) => settings[`template_${item.id}_deleted`] !== true).map((item) => {
       const enabled = isTemplateEnabled(settings, item.id);
       return { ...item, enabled,
         active: enabled && (item.free || (settings["template_" + item.id + "_active"] === true && Number(settings["template_" + item.id + "_price"]) >= 100)),
@@ -711,6 +711,16 @@ router.post("/admin/grant", requirePermission("digital_cards.manage"), async (re
 router.get("/admin/templates", requirePermission("digital_cards.manage"), async (_req, res) => {
   try { res.set("Cache-Control", "no-store").json({ templates: adminTemplates(await getPlanSettings()) }); }
   catch { res.status(500).json({ message: "دریافت وضعیت قالب‌ها ممکن نشد." }); }
+});
+
+router.delete("/admin/templates/:id", requirePermission("digital_cards.manage"), async (req, res) => {
+  const id = req.params.id;
+  if (!TEMPLATE_CATALOG.some((item) => item.id === id)) return fail(res, 404, "قالب پیدا نشد.");
+  try {
+    await query(`INSERT INTO digital_card_settings(key,value) VALUES($1,'true'::jsonb)
+      ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()`, [`template_${id}_deleted`]);
+    res.json({ deleted: true, templates: adminTemplates(await getPlanSettings()) });
+  } catch { res.status(500).json({ message: "حذف قالب انجام نشد؛ دوباره تلاش کنید." }); }
 });
 
 router.put("/admin/templates", requirePermission("digital_cards.manage"), async (req, res) => {

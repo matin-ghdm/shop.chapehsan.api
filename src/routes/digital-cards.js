@@ -650,10 +650,10 @@ router.get("/admin/cards", requirePermission("digital_cards.manage"), async (req
     const status = clean(req.query.status, 20);
     const allowedStatuses = new Set(["draft", "trial", "active", "expired"]);
     const filter = allowedStatuses.has(status) ? status : null;
-    const result = await query(`SELECT c.id,c.user_id,c.public_id,c.title,c.status,c.created_at,c.trial_ends_at,u.name,u.lname,u.phone
+    const result = await query(`SELECT c.id,c.user_id,c.public_id,c.title,c.template,c.status,c.created_at,c.trial_ends_at,u.name,u.lname,u.phone
       FROM digital_cards c JOIN users u ON u.id=c.user_id
       WHERE c.deleted_at IS NULL AND ($1::text IS NULL OR c.status=$1) ORDER BY c.created_at DESC LIMIT 500`, [filter]);
-    res.json({ cards: result.rows });
+    res.json({ cards: result.rows.map((card) => ({ ...card, template_label: TEMPLATE_CATALOG.find((item) => item.id === card.template)?.label || card.template })) });
   } catch (error) { res.status(500).json({ message: "فهرست کارت‌ها در دسترس نیست" }); }
 });
 

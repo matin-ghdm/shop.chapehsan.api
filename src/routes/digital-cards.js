@@ -261,10 +261,12 @@ router.use(authenticate);
 router.get("/leads/mine", async (req, res) => {
   try {
     const status = ["new", "read", "archived"].includes(clean(req.query.status, 20)) ? clean(req.query.status, 20) : null;
+    const cardId = clean(req.query.card, 100) || null;
     const result = await query(`SELECT l.id,l.card_id,l.name,l.phone,l.email,l.message,l.status,l.created_at,c.public_id,c.title
       FROM digital_card_leads l JOIN digital_cards c ON c.id=l.card_id
       WHERE l.user_id=$1 AND ($2::text IS NULL OR l.status=$2)
-      ORDER BY l.created_at DESC LIMIT 200`, [req.user.id, status]);
+        AND ($3::text IS NULL OR l.card_id::text=$3)
+      ORDER BY l.created_at DESC LIMIT 200`, [req.user.id, status, cardId]);
     res.json({ leads: result.rows });
   } catch (error) { res.status(500).json({ message: "درخواست‌های مشتریان در دسترس نیست" }); }
 });

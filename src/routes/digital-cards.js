@@ -347,7 +347,8 @@ router.get("/mine", async (req, res) => {
         AND ranked.status IN ('active','trial') AND (ranked.created_at<c.created_at OR (ranked.created_at=c.created_at AND ranked.id<=c.id))) AS active_card_position,
       (SELECT COUNT(*)::int FROM digital_cards live WHERE live.user_id=c.user_id AND live.deleted_at IS NULL AND live.status IN ('active','trial')) AS live_card_count,
       EXISTS(SELECT 1 FROM digital_cards prior WHERE prior.user_id=c.user_id AND prior.trial_started_at IS NOT NULL AND prior.id<>c.id) AS prior_trial_used,
-      (SELECT COUNT(*)::int FROM digital_card_events WHERE card_id=c.id AND event_type='view') AS views
+      (SELECT COUNT(*)::int FROM digital_card_events WHERE card_id=c.id AND event_type='view') AS views,
+      (SELECT COALESCE(SUM(a.size_bytes),0)::bigint FROM digital_card_assets a WHERE a.user_id=c.user_id AND a.card_id=c.id) AS storage_used_bytes
       FROM digital_cards c WHERE c.user_id=$1 AND c.deleted_at IS NULL ORDER BY c.created_at DESC`, [req.user.id]);
     const assets = await query(`SELECT COALESCE(SUM(size_bytes),0)::bigint AS used_bytes,
         COALESCE(jsonb_agg(a.blob_url), '[]'::jsonb) AS urls ${countedCardAssets}`, [req.user.id]);
@@ -356,7 +357,7 @@ router.get("/mine", async (req, res) => {
       const draftReason = card.status !== "draft" ? null
         : account.subscribed && Number(card.live_card_count) >= account.plan.limits.activeCards ? "plan_limit"
           : !account.subscribed && card.prior_trial_used ? "trial_used" : "activation_required";
-      return { ...card, over_plan_limit: overPlanLimit, draft_reason: draftReason };
+      return { ...card, storage_used_bytes: Number(card.storage_used_bytes), over_plan_limit: overPlanLimit, draft_reason: draftReason };
     });
     res.json({ cards, entitlements: account.plan, subscriptionEndsAt: account.endsAt, storageUsedBytes: Number(assets.rows[0].used_bytes || 0), registeredAssetUrls: assets.rows[0].urls });
   } catch (error) { res.status(500).json({ message: "دریافت کارت‌ها ممکن نشد" }); }
@@ -426,17 +427,19 @@ router.post("/:id/assets/register", async (req, res) => {
         return fail(res, 403, "سقف فایل‌های این بخش در پلن شما پر شده است");
       }
     }
-    const usedResult = await client.query(`SELECT COALESCE(SUM(a.size_bytes),0)::bigint AS used_bytes ${countedCardAssets}`, [req.user.id]);
+    const usedResult = await client.query(`SELECT COALESCE(SUM(a.size_bytes),0)::bigint AS used_bytes,
+      COALESCE(SUM(a.size_bytes) FILTER (WHERE a.card_id=$2),0)::bigint AS card_used_bytes
+      ${countedCardAssets}`, [req.user.id, req.params.id]);
     const usedBytes = Number(usedResult.rows[0].used_bytes || 0);
     const storageCap = account.plan.limits.storageMb * 1024 * 1024;
-    if (!isSiteAdmin(req.user) && usedBytes + fileSize > storageCap) {
+    if (usedBytes + fileSize > storageCap) {
       await client.query("ROLLBACK");
       return fail(res, 413, "فضای ذخیره‌سازی پلن شما کافی نیست؛ ارتقای پلن لازم است");
     }
     await client.query(`INSERT INTO digital_card_assets(card_id,user_id,blob_url,size_bytes,content_type,asset_kind)
       VALUES($1,$2,$3,$4,$5,$6)`, [req.params.id, req.user.id, assetUrl, fileSize, contentType, kind]);
     await client.query("COMMIT");
-    res.status(201).json({ asset: { url: assetUrl, sizeBytes: fileSize, contentType, kind }, usedBytes: usedBytes + fileSize, storageLimitBytes: storageCap });
+    res.status(201).json({ asset: { url: assetUrl, sizeBytes: fileSize, contentType, kind }, usedBytes: usedBytes + fileSize, cardStorageUsedBytes: Number(usedResult.rows[0].card_used_bytes) + fileSize, storageLimitBytes: storageCap });
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("Register digital card asset failed:", error.message);
@@ -456,7 +459,11 @@ router.post("/", async (req, res) => {
       await client.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [req.user.id]);
       const account = await accountEntitlements(req.user.id, client.query.bind(client), req.user.role);
       if (!isTemplateEnabled(account.settings, template)) { await client.query("ROLLBACK"); return fail(res, 409, "این قالب توسط مدیر غیرفعال شده است؛ قالب دیگری انتخاب کنید."); }
-      const count = await client.query("SELECT COUNT(*)::int AS count FROM digital_cards WHERE user_id=$1 AND status IN ('active','trial') AND deleted_at IS NULL", [req.user.id]);
+      const count = await client.query("SELECT COUNT(*)::int AS count FROM digital_cards WHERE user_id=$1 AND deleted_at IS NULL", [req.user.id]);
+      if (Number(count.rows[0].count) >= account.plan.limits.activeCards) {
+        await client.query("ROLLBACK");
+        return fail(res, 409, `سقف ${account.plan.limits.activeCards} کارت در پلن ${account.plan.label} پر شده است. برای ساخت کارت جدید، یکی از کارت‌ها را حذف کنید یا پلن را ارتقا دهید.`);
+      }
       if (!isAdmin && !freeTemplates.has(template)) {
         if (account.plan.features.allTemplates) {
           // The account subscription includes every template.
@@ -468,11 +475,8 @@ router.post("/", async (req, res) => {
       }
       const trial = isAdmin || account.subscribed ? { rowCount: 1 } : await client.query("SELECT id FROM digital_cards WHERE user_id=$1 AND trial_started_at IS NOT NULL LIMIT 1", [req.user.id]);
       const trialDays = Math.max(1, Math.min(30, Number(account.settings.trial_days ?? 7)));
-      const canPublishUnderPlan = Number(count.rows[0].count) < account.plan.limits.activeCards;
-      const cardStatus = isAdmin || (account.subscribed && canPublishUnderPlan) ? "active" : !account.subscribed && !trial.rowCount ? "trial" : "draft";
-      const draftReason = cardStatus !== "draft" ? null
-        : account.subscribed && !canPublishUnderPlan ? "plan_limit"
-          : !account.subscribed && trial.rowCount ? "trial_used" : "activation_required";
+      const cardStatus = isAdmin || account.subscribed ? "active" : !trial.rowCount ? "trial" : "draft";
+      const draftReason = cardStatus === "draft" ? "trial_used" : null;
       const result = await client.query(`INSERT INTO digital_cards(user_id,public_id,title,template,data,status,trial_started_at,trial_ends_at,access_exempt)
         VALUES($1,$2,$3,$4,'{}'::jsonb,$5,CASE WHEN $6 OR $7 OR NOT $9 THEN NULL ELSE NOW() END,CASE WHEN $6 OR $7 OR NOT $9 THEN NULL ELSE NOW()+($8::text||' days')::interval END,$6) RETURNING *`,
         [req.user.id, crypto.randomBytes(8).toString("base64url"), title, template, cardStatus, isAdmin, account.subscribed || isAdmin, trialDays, cardStatus === "trial"]);
@@ -496,7 +500,7 @@ router.post("/:id/activate", async (req, res) => {
     const account = await accountEntitlements(req.user.id, client.query.bind(client), req.user.role);
     if (!isSiteAdmin(req.user) && !account.subscribed) { await client.query("ROLLBACK"); return fail(res, 402, "برای انتشار کارت، پلن فعال تهیه کنید"); }
     const active = await client.query("SELECT COUNT(*)::int AS count FROM digital_cards WHERE user_id=$1 AND status IN ('active','trial') AND deleted_at IS NULL", [req.user.id]);
-    if (!isSiteAdmin(req.user) && Number(active.rows[0].count) >= account.plan.limits.activeCards && card.rows[0].status !== "active") {
+    if (Number(active.rows[0].count) >= account.plan.limits.activeCards && !["active", "trial"].includes(card.rows[0].status)) {
       await client.query("ROLLBACK");
       return fail(res, 409, `سقف کارت‌های منتشرشده در پلن ${account.plan.label} پر شده است`);
     }
@@ -644,9 +648,17 @@ router.post("/subscriptions", async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const owned = await client.query("SELECT id,public_id FROM digital_cards WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL FOR UPDATE", [cardId, req.user.id]);
+    const isAdmin = isSiteAdmin(req.user);
+    if (isAdmin) await client.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [req.user.id]);
+    const owned = await client.query("SELECT id,public_id,status FROM digital_cards WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL FOR UPDATE", [cardId, req.user.id]);
     if (!owned.rowCount) { await client.query("ROLLBACK"); return fail(res, 404, "کارت پیدا نشد"); }
-    if (isSiteAdmin(req.user)) {
+    if (isAdmin) {
+      const account = await accountEntitlements(req.user.id, client.query.bind(client), req.user.role);
+      const active = await client.query("SELECT COUNT(*)::int AS count FROM digital_cards WHERE user_id=$1 AND status IN ('active','trial') AND deleted_at IS NULL", [req.user.id]);
+      if (!["active", "trial"].includes(owned.rows[0].status) && Number(active.rows[0].count) >= account.plan.limits.activeCards) {
+        await client.query("ROLLBACK");
+        return fail(res, 409, "سقف کارت‌های منتشرشده در پلن شما پر شده است.");
+      }
       await client.query("UPDATE digital_cards SET access_exempt=TRUE,status='active',updated_at=NOW() WHERE id=$1", [cardId]);
       await client.query("COMMIT");
       return res.json({ free: true, cardId, status: "active", planCode: "gold" });

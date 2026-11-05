@@ -13,6 +13,9 @@ const templates = new Set(TEMPLATE_CATALOG.map((item) => item.id));
 const freeTemplates = new Set(TEMPLATE_CATALOG.filter((item) => item.free).map((item) => item.id));
 const paidTemplates = TEMPLATE_CATALOG.filter((item) => !item.free);
 const eventTypes = new Set(["view", "mobile", "phone", "map", "messenger", "social", "website", "email"]);
+const countedCardAssets = `FROM digital_card_assets a
+  JOIN digital_cards c ON c.id=a.card_id
+  WHERE a.user_id=$1 AND c.deleted_at IS NULL`;
 const clean = (v, max = 500) => String(v ?? "").trim().slice(0, max);
 const fail = (res, status, message) => res.status(status).json({ message });
 const isSiteAdmin = (user) => String(user?.role || "").trim().toLowerCase() === "admin";
@@ -347,7 +350,7 @@ router.get("/mine", async (req, res) => {
       (SELECT COUNT(*)::int FROM digital_card_events WHERE card_id=c.id AND event_type='view') AS views
       FROM digital_cards c WHERE c.user_id=$1 AND c.deleted_at IS NULL ORDER BY c.created_at DESC`, [req.user.id]);
     const assets = await query(`SELECT COALESCE(SUM(size_bytes),0)::bigint AS used_bytes,
-        COALESCE(jsonb_agg(blob_url), '[]'::jsonb) AS urls FROM digital_card_assets WHERE user_id=$1`, [req.user.id]);
+        COALESCE(jsonb_agg(a.blob_url), '[]'::jsonb) AS urls ${countedCardAssets}`, [req.user.id]);
     const cards = result.rows.map((card) => {
       const overPlanLimit = ["active", "trial"].includes(card.status) && Number(card.active_card_position) > account.plan.limits.activeCards;
       const draftReason = card.status !== "draft" ? null
@@ -423,7 +426,7 @@ router.post("/:id/assets/register", async (req, res) => {
         return fail(res, 403, "سقف فایل‌های این بخش در پلن شما پر شده است");
       }
     }
-    const usedResult = await client.query("SELECT COALESCE(SUM(size_bytes),0)::bigint AS used_bytes FROM digital_card_assets WHERE user_id=$1", [req.user.id]);
+    const usedResult = await client.query(`SELECT COALESCE(SUM(a.size_bytes),0)::bigint AS used_bytes ${countedCardAssets}`, [req.user.id]);
     const usedBytes = Number(usedResult.rows[0].used_bytes || 0);
     const storageCap = account.plan.limits.storageMb * 1024 * 1024;
     if (!isSiteAdmin(req.user) && usedBytes + fileSize > storageCap) {
@@ -546,12 +549,55 @@ router.put("/:id", async (req, res) => {
   } catch (error) { res.status(500).json({ message: "ذخیره کارت ممکن نشد" }); }
 });
 
+// Keep registered assets as a durable cleanup queue until blob deletion succeeds.
+const deletedCardAssets = `FROM digital_card_assets a
+  JOIN digital_cards c ON c.id=a.card_id
+  WHERE a.user_id=$1 AND c.user_id=a.user_id AND c.deleted_at IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM digital_cards other
+      WHERE other.deleted_at IS NULL
+        AND jsonb_path_exists(other.data, '$.** ? (@ == $url)', jsonb_build_object('url', a.blob_url))
+    )`;
+
+router.get("/asset-cleanup", async (req, res) => {
+  try {
+    const result = await query(`SELECT a.id,a.card_id,a.blob_url ${deletedCardAssets}
+      ORDER BY c.deleted_at, a.id LIMIT 100`, [req.user.id]);
+    res.set("Cache-Control", "no-store").json({ assets: result.rows });
+  } catch (error) {
+    console.error("Digital card cleanup lookup failed:", error.message);
+    res.status(500).json({ message: "دریافت فایل‌های در انتظار حذف ممکن نشد." });
+  }
+});
+
+router.post("/asset-cleanup", async (req, res) => {
+  const ids = req.body?.ids;
+  if (!Array.isArray(ids) || !ids.length || ids.length > 100 ||
+      ids.some((id) => typeof id !== "string" || !/^[a-f0-9-]{36}$/i.test(id))) {
+    return fail(res, 400, "شناسهٔ فایل نامعتبر است.");
+  }
+  try {
+    await query(`DELETE FROM digital_card_assets WHERE id IN (
+      SELECT a.id ${deletedCardAssets} AND a.id=ANY($2::uuid[])
+    )`, [req.user.id, ids]);
+    res.json({ acknowledged: true });
+  } catch (error) {
+    console.error("Digital card cleanup acknowledgement failed:", error.message);
+    res.status(500).json({ message: "ثبت پاک‌سازی فایل‌ها انجام نشد." });
+  }
+});
+
 router.delete("/:id", async (req, res) => {
   try {
-    const result = await query(`UPDATE digital_cards SET deleted_at=NOW(),updated_at=NOW()
-      WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL RETURNING id`, [req.params.id, req.user.id]);
+    const result = await query(`WITH removed AS (
+      UPDATE digital_cards SET deleted_at=NOW(),updated_at=NOW()
+      WHERE id=$2 AND user_id=$1 AND deleted_at IS NULL RETURNING id
+    )
+    SELECT removed.id, (SELECT COALESCE(SUM(a.size_bytes),0)::bigint
+      ${countedCardAssets} AND a.card_id<>removed.id) AS used_bytes
+    FROM removed`, [req.user.id, req.params.id]);
     if (!result.rowCount) return fail(res, 404, "کارت پیدا نشد یا قبلاً حذف شده است");
-    res.json({ deleted: true, id: result.rows[0].id });
+    res.json({ deleted: true, id: result.rows[0].id, storageUsedBytes: Number(result.rows[0].used_bytes) });
   } catch (error) {
     console.error("Delete digital card failed:", error.message);
     res.status(500).json({ message: "حذف کارت ممکن نشد" });

@@ -84,7 +84,7 @@ function accountAssetUrls(data = {}) {
   return [...new Set(urls.filter((value) => typeof value === "string" && value.startsWith("https://")))];
 }
 
-async function publicCardBySlug(slug) {
+async function cardAccessRows(condition, params = []) {
   const result = await query(`
     SELECT c.*, COALESCE(s.ends_at, c.trial_ends_at) AS access_ends_at,
       s.plan_code AS access_plan_code,s.entitlements_snapshot AS access_entitlements_snapshot,
@@ -96,11 +96,13 @@ async function publicCardBySlug(slug) {
     LEFT JOIN LATERAL (SELECT plan_code,entitlements_snapshot,ends_at FROM digital_card_subscriptions
       WHERE user_id=c.user_id AND starts_at IS NOT NULL AND starts_at<=NOW() AND ends_at>NOW()
       ORDER BY CASE plan_code WHEN 'gold' THEN 3 WHEN 'silver' THEN 2 ELSE 1 END DESC,ends_at DESC,created_at DESC LIMIT 1) s ON TRUE
-    WHERE c.public_id=$1 AND c.deleted_at IS NULL LIMIT 1`, [slug]);
-  const card = result.rows[0];
-  if (!card) return null;
+    WHERE c.deleted_at IS NULL AND (${condition})
+    ORDER BY c.featured_at DESC NULLS LAST, c.id`, params);
+  return result.rows;
+}
+
+function resolveCardAccess(card, settings) {
   const accessEndsAt = card.access_ends_at ? new Date(card.access_ends_at) : null;
-  const settings = await getPlanSettings();
   const fallback = planSnapshot(settings, card.access_plan_code || "bronze");
   const saved = card.access_entitlements_snapshot;
   card.entitlements = isSiteAdmin({ role: card.owner_role })
@@ -110,7 +112,23 @@ async function publicCardBySlug(slug) {
       : fallback;
   const withinCardLimit = Number(card.active_card_position) <= card.entitlements.limits.activeCards;
   const permitted = card.access_exempt === true || ((card.status === "active" || card.status === "trial") && withinCardLimit && accessEndsAt && accessEndsAt > new Date());
+  return { card, permitted };
+}
+
+async function publicCardBySlug(slug) {
+  const [row] = await cardAccessRows("c.public_id=$1", [slug]);
+  if (!row) return null;
+  const { card, permitted } = resolveCardAccess(row, await getPlanSettings());
   return permitted ? card : { ...card, status: "expired", data: null };
+}
+
+function serializePublicCard(card) {
+  const entitlements = isSiteAdmin({ role: card.owner_role })
+    ? { ...card.entitlements, limits: { ...card.entitlements.limits, linksPerCard: Number.MAX_SAFE_INTEGER } }
+    : card.entitlements;
+  return { public_id: card.public_id, title: card.title, template: card.template, accent_color: card.accent_color,
+    data: publicCardData(card.data, entitlements), views: card.views, access_ends_at: card.access_ends_at,
+    entitlements: card.entitlements };
 }
 
 router.get("/plans", async (_req, res) => {
@@ -120,15 +138,26 @@ router.get("/plans", async (_req, res) => {
   } catch (error) { res.status(500).json({ message: "دریافت تعرفه‌ها ممکن نشد" }); }
 });
 
+router.get("/featured", async (_req, res) => {
+  try {
+    const rows = await cardAccessRows("c.featured_at IS NOT NULL AND c.status IN ('active','trial')");
+    const settings = rows.length ? await getPlanSettings() : {};
+    const cards = rows.filter(row => resolveCardAccess(row, settings).permitted).map(card => ({
+      public_id: card.public_id, title: card.title, accent_color: card.accent_color,
+      template_label: TEMPLATE_CATALOG.find(item => item.id === card.template)?.label || "کارت ویزیت دیجیتال",
+    }));
+    res.set("Cache-Control", "no-store").json({ cards });
+  } catch {
+    res.status(500).json({ message: "نمونه‌های واقعی در دسترس نیست" });
+  }
+});
+
 router.get("/public/:slug", async (req, res) => {
   try {
     const card = await publicCardBySlug(clean(req.params.slug, 32));
     if (!card) return fail(res, 404, "کارت پیدا نشد");
     if (card.status === "expired") return res.status(410).json({ message: "اعتبار این کارت به پایان رسیده است", expired: true });
-    const publicEntitlements = isSiteAdmin({ role: card.owner_role })
-      ? { ...card.entitlements, limits: { ...card.entitlements.limits, linksPerCard: Number.MAX_SAFE_INTEGER } }
-      : card.entitlements;
-    res.json({ card: { public_id: card.public_id, title: card.title, template: card.template, accent_color: card.accent_color, data: publicCardData(card.data, publicEntitlements), views: card.views, access_ends_at: card.access_ends_at, entitlements: card.entitlements } });
+    res.json({ card: serializePublicCard(card) });
   } catch (error) { console.error("Public digital card failed:", error.message); res.status(500).json({ message: "نمایش کارت ممکن نشد" }); }
 });
 
@@ -692,12 +721,48 @@ router.get("/admin/cards", requirePermission("digital_cards.manage"), async (req
     const allowedStatuses = new Set(["draft", "trial", "active", "expired"]);
     const filter = allowedStatuses.has(status) ? status : null;
     const result = await query(`SELECT effective.*
-      FROM (SELECT c.id,c.user_id,c.public_id,c.title,c.template,${adminCardStatus} AS status,c.created_at,c.trial_ends_at,u.name,u.lname,u.phone
+      FROM (SELECT c.id,c.user_id,c.public_id,c.title,c.template,${adminCardStatus} AS status,c.created_at,c.trial_ends_at,c.featured_at,u.name,u.lname,u.phone
         FROM digital_cards c JOIN users u ON u.id=c.user_id
         WHERE c.deleted_at IS NULL) effective
       WHERE ($1::text IS NULL OR effective.status=$1) ORDER BY effective.created_at DESC LIMIT 500`, [filter]);
     res.json({ cards: result.rows.map((card) => ({ ...card, template_label: TEMPLATE_CATALOG.find((item) => item.id === card.template)?.label || card.template })) });
   } catch (error) { res.status(500).json({ message: "فهرست کارت‌ها در دسترس نیست" }); }
+});
+
+router.get("/admin/cards/:id/preview", requirePermission("digital_cards.manage"), async (req, res) => {
+  try {
+    const [row] = await cardAccessRows("c.id=$1", [req.params.id]);
+    if (!row) return fail(res, 404, "کارت پیدا نشد");
+    const { card, permitted } = resolveCardAccess(row, await getPlanSettings());
+    res.set("Cache-Control", "no-store").json({ card: serializePublicCard(card), isPublic: permitted && card.status !== "expired" });
+  } catch {
+    res.status(500).json({ message: "پیش‌نمایش کارت در دسترس نیست" });
+  }
+});
+
+router.put("/admin/cards/:id/featured", requirePermission("digital_cards.manage"), async (req, res) => {
+  const { featured, ownerConsent } = req.body || {};
+  if (typeof featured !== "boolean" || (featured && ownerConsent !== true)) {
+    return fail(res, 400, "موافقت مالک برای نمایش کارت لازم است");
+  }
+  try {
+    if (featured) {
+      const [row] = await cardAccessRows("c.id=$1", [req.params.id]);
+      if (!row) return fail(res, 404, "کارت پیدا نشد");
+      if (!["active", "trial"].includes(row.status) || !resolveCardAccess(row, await getPlanSettings()).permitted) {
+        return fail(res, 409, "فقط کارت دارای نمایش عمومی را می‌توان به نمونه‌ها افزود");
+      }
+    }
+    const result = await query(`
+      UPDATE digital_cards SET featured_at=CASE WHEN $2 THEN COALESCE(featured_at,NOW()) ELSE NULL END,
+        featured_by=CASE WHEN $2 THEN COALESCE(featured_by,$3) ELSE NULL END
+      WHERE id=$1 AND deleted_at IS NULL AND (NOT $2 OR status IN ('active','trial'))
+      RETURNING featured_at`, [req.params.id, featured, req.user.id]);
+    if (!result.rowCount) return fail(res, 404, "کارت در دسترس نیست");
+    res.json({ featured_at: result.rows[0].featured_at });
+  } catch {
+    res.status(500).json({ message: "ذخیره وضعیت نمایش کارت ممکن نشد" });
+  }
 });
 
 router.get("/admin/subscriptions", requirePermission("digital_cards.manage"), async (_req, res) => {

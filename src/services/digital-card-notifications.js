@@ -19,6 +19,15 @@ const MESSAGE_TEXT = {
   subscription_expired: "اعتبار کارت ویزیت دیجیتال شما پایان یافته است.",
 };
 
+const STATUS_TEXT = {
+  trial_started: "دورهٔ آزمایشی فعال شد",
+  trial_reminder: "پایان آزمایش نزدیک است",
+  trial_expired: "دورهٔ آزمایشی پایان یافت",
+  subscription_paid: "خرید یا تمدید اشتراک تأیید شد",
+  subscription_reminder: "پایان اشتراک نزدیک است",
+  subscription_expired: "اعتبار اشتراک پایان یافت",
+};
+
 function parseSetting(value) {
   return value && typeof value === "object" && Object.hasOwn(value, "value")
     ? value.value
@@ -35,6 +44,21 @@ function buildMessage(kind, title) {
   if (!text) throw new Error("نوع اعلان کارت دیجیتال معتبر نیست");
   const safeTitle = String(title || "کارت دیجیتال").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 80);
   return `${safeTitle}: ${text}`;
+}
+
+function buildTemplateParameters(item, settings) {
+  const messageParam = String(settings.sms_message_param || "MESSAGE").trim();
+  if (messageParam === "STATUS") {
+    return [{ name: "STATUS", value: STATUS_TEXT[item.kind] }];
+  }
+  const linkParam = String(settings.sms_link_param || "LINK").trim();
+  if (!/^[A-Za-z0-9_]{1,50}$/.test(messageParam) || !/^[A-Za-z0-9_]{1,50}$/.test(linkParam) || messageParam === linkParam) {
+    throw new Error("پارامترهای قالب پیامک معتبر نیستند");
+  }
+  return [
+    { name: messageParam, value: buildMessage(item.kind, item.title) },
+    { name: linkParam, value: "https://chapehsan.com/my-digital-cards" },
+  ];
 }
 
 async function getSettings() {
@@ -129,15 +153,7 @@ async function sendClaimedNotification(item, settings) {
     return;
   }
   try {
-    const messageParam = String(settings.sms_message_param || "MESSAGE").trim();
-    const linkParam = String(settings.sms_link_param || "LINK").trim();
-    if (!/^[A-Za-z0-9_]{1,50}$/.test(messageParam) || !/^[A-Za-z0-9_]{1,50}$/.test(linkParam) || messageParam === linkParam) {
-      throw new Error("پارامترهای قالب پیامک معتبر نیستند");
-    }
-    const params = [
-      { name: messageParam, value: buildMessage(item.kind, item.title) },
-      { name: linkParam, value: "https://chapehsan.com/my-digital-cards" },
-    ];
+    const params = buildTemplateParameters(item, settings);
     await smsir.sendTemplate(item.phone, Number(settings.sms_template_id), params);
     await query(`UPDATE digital_card_notifications SET status='sent',sent_at=NOW(),last_error=NULL,updated_at=NOW() WHERE id=$1`, [item.id]);
   } catch (error) {
@@ -177,6 +193,7 @@ module.exports = {
   MESSAGE_TEXT,
   NOTIFICATION_SETTINGS,
   buildMessage,
+  buildTemplateParameters,
   notificationEnabled,
   enqueueNotification,
   runDigitalCardNotificationWorker,

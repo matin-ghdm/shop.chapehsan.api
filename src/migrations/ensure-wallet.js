@@ -24,6 +24,7 @@ async function ensureWallet() {
           AND (
             pg_get_constraintdef(oid) NOT LIKE '%cashback_reward%'
             OR pg_get_constraintdef(oid) NOT LIKE '%cashback_reversal%'
+            OR pg_get_constraintdef(oid) NOT LIKE '%admin_topup%'
           )
       ) THEN
         ALTER TABLE wallet_transactions DROP CONSTRAINT wallet_transactions_type_check;
@@ -36,7 +37,8 @@ async function ensureWallet() {
           'order_cancel_refund',
           'late_payment_refund',
           'cashback_reward',
-          'cashback_reversal'
+          'cashback_reversal',
+          'admin_topup'
         ));
       END IF;
     END $$
@@ -49,6 +51,28 @@ async function ensureWallet() {
   await query(`
     CREATE INDEX IF NOT EXISTS wallet_transactions_user_created_idx
       ON wallet_transactions (user_id, created_at DESC)
+  `);
+  await query(`
+    CREATE TABLE IF NOT EXISTS wallet_admin_topups (
+      id UUID PRIMARY KEY,
+      admin_id UUID NOT NULL,
+      admin_name TEXT NOT NULL,
+      admin_phone TEXT NOT NULL,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      amount BIGINT NOT NULL CHECK (amount > 0),
+      reason TEXT NOT NULL CHECK (char_length(reason) BETWEEN 1 AND 200),
+      code_hash TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      sent_at TIMESTAMPTZ,
+      confirmed_at TIMESTAMPTZ,
+      transaction_id BIGINT UNIQUE REFERENCES wallet_transactions(id) ON DELETE CASCADE
+    )
+  `);
+  await query(`
+    CREATE INDEX IF NOT EXISTS wallet_admin_topups_admin_created_idx
+      ON wallet_admin_topups (admin_id, created_at DESC)
   `);
   await query(`
     ALTER TABLE orders

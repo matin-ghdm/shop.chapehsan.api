@@ -27,9 +27,10 @@ async function getWallet(userId) {
   const [balance, transactions] = await Promise.all([
     getBalance(userId),
     query(
-      `SELECT id::text AS id, order_id, type, amount::float8 AS amount, created_at
-       FROM wallet_transactions WHERE user_id = $1
-       ORDER BY created_at DESC, id DESC LIMIT 100`,
+      `SELECT t.id::text AS id, t.order_id, t.type, t.amount::float8 AS amount, t.created_at, a.reason
+       FROM wallet_transactions t
+       LEFT JOIN wallet_admin_topups a ON a.transaction_id=t.id
+       WHERE t.user_id=$1 ORDER BY t.created_at DESC, t.id DESC LIMIT 100`,
       [userId],
     ),
   ]);

@@ -689,10 +689,23 @@ router.post("/subscriptions", async (req, res) => {
   } finally { client.release(); }
 });
 
+const adminCardStatus = `CASE
+  WHEN c.status IN ('trial','active') AND c.access_exempt IS NOT TRUE
+    AND (c.trial_ends_at IS NULL OR c.trial_ends_at<=NOW())
+    AND NOT EXISTS (
+      SELECT 1 FROM digital_card_subscriptions s
+      WHERE s.user_id=c.user_id AND s.starts_at<=NOW() AND s.ends_at>NOW()
+    )
+  THEN 'expired'
+  ELSE c.status
+END`;
+
 router.get("/admin/stats", requirePermission("digital_cards.manage"), async (_req, res) => {
   try {
     const [cards, events, daily, monthly] = await Promise.all([
-      query("SELECT status,COUNT(*)::int AS count FROM digital_cards GROUP BY status ORDER BY status"),
+      query(`SELECT effective.status,COUNT(*)::int AS count
+        FROM (SELECT ${adminCardStatus} AS status FROM digital_cards c WHERE c.deleted_at IS NULL) effective
+        GROUP BY effective.status ORDER BY effective.status`),
       query("SELECT event_type,COUNT(*)::int AS count FROM digital_card_events GROUP BY event_type ORDER BY event_type"),
       query(`SELECT date_trunc('day',created_at)::date AS date,COUNT(*)::int AS count
         FROM digital_card_events WHERE created_at>=NOW()-INTERVAL '30 days'
@@ -710,9 +723,11 @@ router.get("/admin/cards", requirePermission("digital_cards.manage"), async (req
     const status = clean(req.query.status, 20);
     const allowedStatuses = new Set(["draft", "trial", "active", "expired"]);
     const filter = allowedStatuses.has(status) ? status : null;
-    const result = await query(`SELECT c.id,c.user_id,c.public_id,c.title,c.template,c.status,c.created_at,c.trial_ends_at,u.name,u.lname,u.phone
-      FROM digital_cards c JOIN users u ON u.id=c.user_id
-      WHERE c.deleted_at IS NULL AND ($1::text IS NULL OR c.status=$1) ORDER BY c.created_at DESC LIMIT 500`, [filter]);
+    const result = await query(`SELECT effective.*
+      FROM (SELECT c.id,c.user_id,c.public_id,c.title,c.template,${adminCardStatus} AS status,c.created_at,c.trial_ends_at,u.name,u.lname,u.phone
+        FROM digital_cards c JOIN users u ON u.id=c.user_id
+        WHERE c.deleted_at IS NULL) effective
+      WHERE ($1::text IS NULL OR effective.status=$1) ORDER BY effective.created_at DESC LIMIT 500`, [filter]);
     res.json({ cards: result.rows.map((card) => ({ ...card, template_label: TEMPLATE_CATALOG.find((item) => item.id === card.template)?.label || card.template })) });
   } catch (error) { res.status(500).json({ message: "فهرست کارت‌ها در دسترس نیست" }); }
 });

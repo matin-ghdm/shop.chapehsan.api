@@ -1,4 +1,5 @@
 const ZIBAL_BASE = "https://gateway.zibal.ir";
+const MIN_PAYMENT_TOMAN = 100;
 
 function httpError(message, status = 400, code = "BAD_REQUEST") {
   const error = new Error(message);
@@ -26,7 +27,7 @@ function callbackUrl() {
 /** قیمت فروشگاه به تومان است؛ زیبال مبلغ را به ریال می‌گیرد. */
 function tomanToRial(toman) {
   const amount = Math.round(Number(toman) || 0) * 10;
-  if (amount < 1000) {
+  if (amount < MIN_PAYMENT_TOMAN * 10) {
     throw httpError(
       "مبلغ پرداخت باید حداقل ۱۰۰ تومان باشد",
       400,
@@ -39,6 +40,7 @@ function tomanToRial(toman) {
 async function zibalPost(path, body) {
   const response = await fetch(`${ZIBAL_BASE}${path}`, {
     method: "POST",
+    signal: AbortSignal.timeout(12000),
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
@@ -132,6 +134,7 @@ module.exports = {
   verifyPayment,
   inquiryPayment,
   tomanToRial,
+  MIN_PAYMENT_TOMAN,
   REQUEST_RESULT_FA,
   VERIFY_RESULT_FA,
 };

@@ -75,6 +75,14 @@ async function ensureWallet() {
       ON wallet_admin_topups (admin_id, created_at DESC)
   `);
   await query(`
+    CREATE TABLE IF NOT EXISTS superseded_zibal_payments (
+      track_id BIGINT PRIMARY KEY,
+      order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+      amount BIGINT NOT NULL CHECK (amount > 0),
+      refund_transaction_id BIGINT REFERENCES wallet_transactions(id) ON DELETE SET NULL
+    )
+  `);
+  await query(`
     ALTER TABLE orders
       ADD COLUMN IF NOT EXISTS wallet_amount BIGINT NOT NULL DEFAULT 0,
       ADD COLUMN IF NOT EXISTS amount_before_wallet BIGINT

@@ -21,8 +21,8 @@ async function create(userId, downloadId) {
     if(!item.is_paid || Number(item.price)<100 || !item.file_key) throw error('این فایل برای خرید آماده نیست');
     const owned=await client.query('SELECT 1 FROM download_purchases WHERE user_id=$1 AND download_id=$2 AND paid_at IS NOT NULL',[userId,downloadId]);
     if(owned.rowCount) {await client.query('COMMIT');return {owned:true};}
-    const pending=await client.query(`SELECT p.order_id FROM download_purchases p JOIN orders o ON o.id=p.order_id
-      WHERE p.user_id=$1 AND p.download_id=$2 AND p.amount=$3 AND p.paid_at IS NULL AND o.status='awaiting_payment'
+    const pending=await client.query(`SELECT p.order_id,p.amount FROM download_purchases p JOIN orders o ON o.id=p.order_id
+      WHERE p.user_id=$1 AND p.download_id=$2 AND (p.amount=$3 OR o.wallet_amount>0) AND p.paid_at IS NULL AND o.status='awaiting_payment'
       ORDER BY p.created_at DESC LIMIT 1`,[userId,downloadId,item.price]);
     let orderId=pending.rows[0]?.order_id;
     if(!orderId) {
@@ -30,7 +30,7 @@ async function create(userId, downloadId) {
       orderId=order.rows[0].id;
       await client.query('INSERT INTO download_purchases(order_id,download_id,user_id,amount,name) VALUES($1,$2,$3,$4,$5)',[orderId,downloadId,userId,item.price,item.name]);
     }
-    await client.query('COMMIT');return {orderId,amount:Number(item.price)};
+    await client.query('COMMIT');return {orderId,amount:Number(pending.rows[0]?.amount ?? item.price)};
   } catch(err) {await client.query('ROLLBACK');throw err;} finally {client.release();}
 }
 module.exports={owns,list,create};

@@ -1,266 +1,47 @@
 const express = require("express");
 const { authenticate } = require("../middleware/auth");
-const ordersService = require("../services/orders");
-const zibal = require("../services/zibal");
-const { pool, query } = require("../db");
+const payments = require("../services/order-payments");
 
 const router = express.Router();
 
-function httpError(message, status = 400, code = "BAD_REQUEST") {
-  const error = new Error(message);
-  error.status = status;
-  error.code = code;
-  return error;
+function sendError(res, error) {
+  if (!error.status || error.status >= 500) console.error("Zibal payment failed:", error.message);
+  res.status(error.status || 500).json({
+    message: error.status ? error.message : "انجام عملیات پرداخت ممکن نشد",
+    code: error.code,
+  });
 }
 
-/** Start Zibal payment for an existing awaiting_payment order. */
-router.post("/zibal/request", authenticate, async (req, res) => {
+router.post("/zibal/quote", authenticate, async (req, res) => {
   try {
-    const orderId = String(req.body?.orderId || "").trim();
-    if (!orderId) {
-      throw httpError("orderId الزامی است", 400, "VALIDATION_ERROR");
-    }
-
-    const order = await ordersService.getOrderWithItems(orderId);
-    ordersService.assertOrderAccess(order, req.user);
-
-    if (order.status === "paid" || order.status === "confirmed") {
-      throw httpError("این سفارش قبلاً پرداخت شده است", 400, "ALREADY_PAID");
-    }
-
-    if (Number(order.total_price) <= 0) {
-      throw httpError("این سفارش با اعتبار کیف پول تسویه شده است", 400, "NO_PAYMENT_DUE");
-    }
-
-    if (order.status !== "awaiting_payment" && order.status !== "pending") {
-      throw httpError(
-        "این سفارش قابل پرداخت نیست",
-        400,
-        "INVALID_ORDER_STATUS",
-      );
-    }
-
-    const digital = await query('SELECT amount FROM download_purchases WHERE order_id=$1',[order.id]);
-    const cardSubscription = await query('SELECT amount FROM digital_card_subscriptions WHERE order_id=$1',[order.id]);
-    const cardTemplate = await query('SELECT amount FROM digital_card_template_purchases WHERE order_id=$1',[order.id]);
-    if ([digital, cardSubscription, cardTemplate].filter((item) => item.rowCount).length > 1) throw httpError('نوع سفارش دیجیتال نامعتبر است');
-    if (digital.rowCount && process.env.NODE_ENV==='production' && (!process.env.ZIBAL_MERCHANT || process.env.ZIBAL_MERCHANT==='zibal')) throw httpError('درگاه واقعی خرید فایل هنوز تنظیم نشده است',503,'PAYMENT_CONFIG');
-    if (cardSubscription.rowCount && process.env.NODE_ENV==='production' && (!process.env.ZIBAL_MERCHANT || process.env.ZIBAL_MERCHANT==='zibal')) throw httpError('درگاه واقعی کارت دیجیتال هنوز تنظیم نشده است',503,'PAYMENT_CONFIG');
-    if (cardTemplate.rowCount && process.env.NODE_ENV==='production' && (!process.env.ZIBAL_MERCHANT || process.env.ZIBAL_MERCHANT==='zibal')) throw httpError('درگاه خرید قالب هنوز تنظیم نشده است',503,'PAYMENT_CONFIG');
-    if (digital.rowCount && Number(digital.rows[0].amount)!==Number(order.total_price)) throw httpError('مبلغ سفارش فایل نامعتبر است');
-    if (cardSubscription.rowCount && Number(cardSubscription.rows[0].amount)!==Number(order.total_price)) throw httpError('مبلغ سفارش اشتراک نامعتبر است');
-    if (cardTemplate.rowCount && Number(cardTemplate.rows[0].amount)!==Number(order.total_price)) throw httpError('مبلغ سفارش قالب نامعتبر است');
-    const payment = await zibal.requestPayment({
-      amountToman: order.total_price,
-      orderId: order.id,
-      description: `سفارش چاپ احسان #${order.id.slice(0, 8)}`,
-      mobile: order.user_phone || req.user.phone || null,
-    });
-
-    await query(
-      `UPDATE orders
-       SET payment_track_id = $1,
-           status = 'awaiting_payment'
-       WHERE id = $2`,
-      [payment.trackId, order.id],
-    );
-
-    res.json({
-      trackId: payment.trackId,
-      paymentUrl: payment.paymentUrl,
-      orderId: order.id,
-    });
-  } catch (err) {
-    console.error("Zibal request failed:", err.message);
-    res.status(err.status || 500).json({
-      message: err.message || "خطا در ایجاد پرداخت",
-      code: err.code,
-    });
-  }
+    res.set("Cache-Control", "no-store");
+    res.json(await payments.quote(String(req.body?.orderId || "").trim(), req.user));
+  } catch (error) { sendError(res, error); }
 });
 
-/**
- * Verify payment after Zibal browser callback.
- * Auth optional: tracked by payment_track_id.
- */
+router.post("/zibal/request", authenticate, async (req, res) => {
+  try {
+    const { orderId, walletAmount, amountDue } = req.body || {};
+    const confirmsQuote = walletAmount !== undefined || amountDue !== undefined;
+    if (confirmsQuote && (!Number.isSafeInteger(walletAmount) || walletAmount < 0 ||
+      !Number.isSafeInteger(amountDue) || amountDue < 0)) {
+      return res.status(400).json({ message: "مبلغ پرداخت معتبر نیست", code: "VALIDATION_ERROR" });
+    }
+    res.json(await payments.start(
+      String(orderId || "").trim(), req.user, confirmsQuote ? { walletAmount, amountDue } : null,
+    ));
+  } catch (error) { sendError(res, error); }
+});
+
 router.post("/zibal/verify", async (req, res) => {
   try {
-    const trackId = Number(req.body?.trackId || req.query?.trackId);
-    const successFlag = String(
-      req.body?.success ?? req.query?.success ?? "",
-    ).trim();
-
-    if (!Number.isFinite(trackId) || trackId <= 0) {
-      throw httpError("trackId نامعتبر است", 400, "INVALID_TRACK");
+    const trackId = String(req.body?.trackId ?? req.query?.trackId ?? "").trim();
+    if (!/^[1-9]\d{0,17}$/.test(trackId)) {
+      return res.status(400).json({ message: "شناسه پرداخت نامعتبر است", code: "INVALID_TRACK" });
     }
-
-    const orderResult = await query(
-      `SELECT id, user_id, status, total_price, subtotal_price, discount_code, discount_amount,
-              shipping_fee, rush_fee, payment_track_id, payment_ref_number,
-              (SELECT download_id FROM download_purchases WHERE order_id=orders.id) AS download_id,
-              (SELECT amount FROM download_purchases WHERE order_id=orders.id) AS digital_amount,
-              (SELECT amount FROM digital_card_subscriptions WHERE order_id=orders.id) AS card_subscription_amount,
-              (SELECT amount FROM digital_card_template_purchases WHERE order_id=orders.id) AS card_template_amount,
-              (SELECT template FROM digital_card_template_purchases WHERE order_id=orders.id) AS card_template
-       FROM orders
-       WHERE payment_track_id = $1
-       LIMIT 1`,
-      [trackId],
-    );
-    const order = orderResult.rows[0];
-    if (!order) {
-      throw httpError("سفارش مرتبط با این پرداخت یافت نشد", 404, "NOT_FOUND");
-    }
-    if (order.card_template_amount != null && Number(order.card_template_amount) !== Number(order.total_price)) {
-      throw httpError("مبلغ سفارش قالب با مبلغ پرداخت مطابقت ندارد", 400, "AMOUNT_MISMATCH");
-    }
-
-    if (order.status === "paid" && order.payment_ref_number) {
-      return res.json({
-        ok: true,
-        alreadyPaid: true,
-        orderId: order.id,
-        downloadId: order.download_id || undefined,
-        refNumber: order.payment_ref_number,
-        message: "پرداخت قبلاً تایید شده است",
-      });
-    }
-
-    if (successFlag === "0") {
-      return res.json({
-        ok: false,
-        orderId: order.id,
-        downloadId: order.download_id || undefined,
-        message: "پرداخت توسط کاربر لغو یا ناموفق شد",
-        code: "PAYMENT_FAILED",
-      });
-    }
-
-    const verify = await zibal.verifyPayment(trackId);
-    const result = Number(verify.result);
-
-    if (result === 100 || result === 201) {
-      if (verify.amount != null && Number(verify.amount)!==Number(order.total_price)*10) throw httpError('مبلغ تأییدشده با سفارش مطابقت ندارد',400,'AMOUNT_MISMATCH');
-      const client = await pool.connect();
-      try {
-        await client.query("BEGIN");
-        const locked = await client.query(
-          `SELECT id, user_id, status, total_price, subtotal_price, discount_code, discount_amount,
-                  shipping_fee, rush_fee, payment_ref_number,
-          (SELECT amount FROM download_purchases WHERE order_id=orders.id) AS digital_amount,
-                  (SELECT id FROM digital_card_subscriptions WHERE order_id=orders.id) AS card_subscription_id,
-                  (SELECT card_id FROM digital_card_subscriptions WHERE order_id=orders.id) AS card_subscription_card_id,
-                  (SELECT id FROM digital_card_template_purchases WHERE order_id=orders.id) AS card_template_purchase_id
-           FROM orders WHERE id = $1 FOR UPDATE`,
-          [order.id],
-        );
-        const current = locked.rows[0];
-        if (!current) throw httpError("سفارش پیدا نشد", 404, "NOT_FOUND");
-        if (current.status === "canceled") {
-          await client.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [current.user_id]);
-          await require("../services/wallet").addTransaction(client, {
-            userId: current.user_id,
-            orderId: current.id,
-            type: "late_payment_refund",
-            amount: Number(order.total_price),
-          });
-          await client.query(
-            `UPDATE orders SET payment_ref_number = COALESCE($1, payment_ref_number),
-               payment_card_number = COALESCE($2, payment_card_number)
-             WHERE id = $3`,
-            [verify.refNumber ? String(verify.refNumber) : null,
-              verify.cardNumber ? String(verify.cardNumber) : null, order.id],
-          );
-          await client.query("COMMIT");
-          return res.json({
-            ok: true,
-            orderId: order.id,
-            message: "پرداخت سفارش لغوشده به کیف پول مشتری برگشت داده شد",
-          });
-        }
-        await client.query(
-          `WITH paid AS (UPDATE orders
-           SET status = 'paid',
-               payment_ref_number = COALESCE($1, payment_ref_number),
-               payment_card_number = COALESCE($2, payment_card_number),
-               paid_at = COALESCE(paid_at, NOW())
-           WHERE id = $3 RETURNING id)
-           UPDATE download_purchases SET paid_at=COALESCE(paid_at,NOW())
-           WHERE order_id IN (SELECT id FROM paid)`,
-          [verify.refNumber ? String(verify.refNumber) : null,
-            verify.cardNumber ? String(verify.cardNumber) : null, order.id],
-        );
-        await client.query("UPDATE digital_card_template_purchases SET paid_at=COALESCE(paid_at,NOW()) WHERE order_id=$1", [order.id]);
-        await client.query(`SELECT c.id FROM digital_cards c
-          JOIN digital_card_subscriptions s ON s.card_id=c.id
-          WHERE s.order_id=$1 FOR UPDATE OF c`, [order.id]);
-        await client.query(`
-          WITH pending AS (
-            SELECT s.id,s.card_id,s.plan_months,
-              GREATEST(NOW(), COALESCE((SELECT MAX(active.ends_at)
-                FROM digital_card_subscriptions active
-                WHERE active.card_id=s.card_id AND active.starts_at IS NOT NULL AND active.ends_at > NOW()), NOW())) AS starts_at
-            FROM digital_card_subscriptions s
-            WHERE s.order_id=$1 AND s.starts_at IS NULL
-            FOR UPDATE OF s
-          ), activated AS (
-            UPDATE digital_card_subscriptions s SET starts_at=p.starts_at,
-              ends_at=p.starts_at + (p.plan_months || ' months')::interval
-            FROM pending p WHERE s.id=p.id RETURNING s.card_id,s.ends_at
-          )
-          UPDATE digital_cards c SET status='active',updated_at=NOW()
-          FROM activated a WHERE c.id=a.card_id
-        `, [order.id]);
-        await client.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [current.user_id]);
-        await require("../services/cashback").awardCashback(client, current);
-        await client.query("COMMIT");
-        if (current.card_subscription_id && current.card_subscription_card_id) {
-          try {
-            await require("../services/digital-card-notifications").enqueueNotification(
-              current.card_subscription_card_id,
-              "subscription_paid",
-              `subscription_paid_${current.card_subscription_id}`,
-            );
-          } catch (error) {
-            console.error("Could not queue subscription confirmation SMS:", error.message);
-          }
-        }
-      } catch (err) {
-        await client.query("ROLLBACK");
-        throw err;
-      } finally {
-        client.release();
-      }
-
-      return res.json({
-        ok: true,
-        orderId: order.id,
-        downloadId: order.download_id || undefined,
-        refNumber: verify.refNumber || order.payment_ref_number || null,
-        cardNumber: verify.cardNumber || null,
-        message:
-          zibal.VERIFY_RESULT_FA[result] || "پرداخت با موفقیت تایید شد",
-      });
-    }
-
-    res.json({
-      ok: false,
-      orderId: order.id,
-      downloadId: order.download_id || undefined,
-      result,
-      message:
-        zibal.VERIFY_RESULT_FA[result] ||
-        verify.message ||
-        "تایید پرداخت ناموفق بود",
-      code: "VERIFY_FAILED",
-    });
-  } catch (err) {
-    console.error("Zibal verify failed:", err.message);
-    res.status(err.status || 500).json({
-      message: err.message || "خطا در تایید پرداخت",
-      code: err.code,
-    });
-  }
+    const success = String(req.body?.success ?? req.query?.success ?? "").trim();
+    res.json(await payments.verify(trackId, success));
+  } catch (error) { sendError(res, error); }
 });
 
 module.exports = router;

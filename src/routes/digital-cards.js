@@ -318,12 +318,12 @@ router.post("/templates/purchase", async (req, res) => {
     const entitlement = await client.query(`SELECT 1 FROM digital_card_template_purchases WHERE user_id=$1 AND template=$2 AND paid_at IS NOT NULL
       UNION SELECT 1 FROM digital_cards WHERE user_id=$1 AND template=$2 LIMIT 1`, [req.user.id, template]);
     if (entitlement.rowCount) { await client.query("COMMIT"); return res.json({ owned: true }); }
-    const pending = await client.query(`SELECT p.order_id,o.total_price FROM digital_card_template_purchases p JOIN orders o ON o.id=p.order_id
+    const pending = await client.query(`SELECT p.order_id,p.amount,o.wallet_amount FROM digital_card_template_purchases p JOIN orders o ON o.id=p.order_id
       WHERE p.user_id=$1 AND p.template=$2 AND p.paid_at IS NULL AND o.status IN ('awaiting_payment','pending')
       ORDER BY p.created_at DESC LIMIT 1 FOR UPDATE OF p,o`, [req.user.id, template]);
-    if (pending.rowCount && Number(pending.rows[0].total_price) === amount) {
+    if (pending.rowCount && (Number(pending.rows[0].amount) === amount || Number(pending.rows[0].wallet_amount) > 0)) {
       await client.query("COMMIT");
-      return res.json({ orderId: pending.rows[0].order_id, amount });
+      return res.json({ orderId: pending.rows[0].order_id, amount: Number(pending.rows[0].amount) });
     }
     if (pending.rowCount) await client.query("UPDATE orders SET status='canceled' WHERE id=$1", [pending.rows[0].order_id]);
     const order = await client.query(`INSERT INTO orders(user_id,is_pickup,status,total_price,note)
@@ -635,12 +635,12 @@ router.post("/subscriptions", async (req, res) => {
     const price = planPrice(settings, tier, months);
     const amount = price.price;
     if (!Number.isSafeInteger(amount) || amount < 100 || !price.active) { await client.query("ROLLBACK"); return fail(res, 503, "این پلن در حال حاضر برای خرید فعال نیست"); }
-    const pending = await client.query(`SELECT s.order_id,o.total_price FROM digital_card_subscriptions s JOIN orders o ON o.id=s.order_id
+    const pending = await client.query(`SELECT s.order_id,s.amount,o.wallet_amount FROM digital_card_subscriptions s JOIN orders o ON o.id=s.order_id
       WHERE s.user_id=$1 AND s.card_id=$2 AND s.plan_code=$3 AND s.plan_months=$4 AND s.starts_at IS NULL
       AND o.status IN ('awaiting_payment','pending') ORDER BY s.created_at DESC LIMIT 1 FOR UPDATE OF s,o`, [req.user.id, cardId, tier, months]);
-    if (pending.rowCount && Number(pending.rows[0].total_price) === amount) {
+    if (pending.rowCount && (Number(pending.rows[0].amount) === amount || Number(pending.rows[0].wallet_amount) > 0)) {
       await client.query("COMMIT");
-      return res.json({ orderId: pending.rows[0].order_id, amount, planCode: tier, months });
+      return res.json({ orderId: pending.rows[0].order_id, amount: Number(pending.rows[0].amount), planCode: tier, months });
     }
     if (pending.rowCount) await client.query("UPDATE orders SET status='canceled' WHERE id=$1", [pending.rows[0].order_id]);
     const orderResult = await client.query(`INSERT INTO orders(user_id,is_pickup,status,total_price,note)

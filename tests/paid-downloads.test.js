@@ -3,7 +3,19 @@ let row={id:'file-id',name:'Map',is_active:true,is_paid:true,price:380000,file_k
 let owned=false,verifyResult={result:202},paid=false;
 const calls=[];
 function mock(name,exports){const id=require.resolve(name);require.cache[id]={id,filename:id,loaded:true,exports};}
-mock('../src/db',{query:async(sql,values)=>{calls.push({sql,values});if(sql.includes('WITH paid AS'))paid=true;if(sql.includes('payment_track_id = $1')&&sql.startsWith('SELECT'))return {rows:[{id:'order-id',total_price:380000,status:'awaiting_payment'}]};return {rows:[row],rowCount:1};}});
+const orderId = '975090ba-f723-4cf0-a264-16e188eaf111';
+async function query(sql, values) {
+  calls.push({ sql, values });
+  if (sql.includes('SELECT id FROM orders WHERE payment_track_id')) return { rows: [{ id: orderId }] };
+  if (sql.includes('FROM orders WHERE id=$1')) {
+    return { rows: [{ id: orderId, user_id: 'buyer', download_id: row.id, digital_amount: 380000,
+      total_price: 380000, payment_track_id: '123', status: 'awaiting_payment' }] };
+  }
+  if (sql.startsWith('UPDATE download_purchases SET paid_at')) paid = true;
+  return { rows: [row], rowCount: 1 };
+}
+mock('../src/db', { query, pool: { connect: async () => ({ query, release() {} }) } });
+mock('../src/services/cashback', { awardCashback: async () => {} });
 mock('../src/services/download-purchases',{owns:async()=>owned,list:async()=>[],create:async()=>({orderId:'order-id'})});
 mock('../src/services/orders',{getOrderWithItems:async()=>({id:'order-id',total_price:380000,status:'awaiting_payment'}),assertOrderAccess:()=>{}});
 mock('../src/services/zibal',{verifyPayment:async()=>verifyResult,VERIFY_RESULT_FA:{}});

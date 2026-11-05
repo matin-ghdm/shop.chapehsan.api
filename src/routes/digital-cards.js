@@ -608,38 +608,6 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
-router.get("/:id/stats", async (req, res) => {
-  try {
-    const owned = await query("SELECT id FROM digital_cards WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL", [req.params.id, req.user.id]);
-    if (!owned.rowCount) return fail(res, 404, "کارت پیدا نشد");
-    const account = await accountEntitlements(req.user.id, query, req.user.role);
-    if (!account.plan.features.fullAnalytics) {
-      const result = await query(`SELECT 'view' AS event_type,COUNT(*)::int AS count FROM digital_card_events WHERE card_id=$1 AND event_type='view'`, [req.params.id]);
-      return res.json({ events: result.rows, daily: [], monthly: [], detailedAvailable: false });
-    }
-    const [totals, daily, monthly] = await Promise.all([
-      query(`SELECT event_type, COUNT(*)::int AS count FROM digital_card_events WHERE card_id=$1 GROUP BY event_type ORDER BY event_type`, [req.params.id]),
-      query(`SELECT date_trunc('day',created_at)::date AS date,event_type,COUNT(*)::int AS count
-        FROM digital_card_events WHERE card_id=$1 AND created_at>=NOW()-INTERVAL '30 days'
-        GROUP BY date_trunc('day',created_at)::date,event_type ORDER BY date DESC,event_type`, [req.params.id]),
-      query(`SELECT date_trunc('month',created_at)::date AS month,event_type,COUNT(*)::int AS count
-        FROM digital_card_events WHERE card_id=$1 AND created_at>=NOW()-INTERVAL '12 months'
-        GROUP BY date_trunc('month',created_at)::date,event_type ORDER BY month DESC,event_type`, [req.params.id]),
-    ]);
-    res.json({ events: totals.rows, daily: daily.rows, monthly: monthly.rows, detailedAvailable: true });
-  } catch (error) { res.status(500).json({ message: "گزارش کارت در دسترس نیست" }); }
-});
-
-router.get("/:id/subscriptions", async (req, res) => {
-  try {
-    const owned = await query("SELECT id FROM digital_cards WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL", [req.params.id, req.user.id]);
-    if (!owned.rowCount) return fail(res, 404, "کارت پیدا نشد");
-    const result = await query(`SELECT s.id,s.plan_code,s.plan_months,s.amount,s.starts_at,s.ends_at,s.created_at,o.id AS order_id,o.status AS order_status,o.payment_ref_number
-      FROM digital_card_subscriptions s LEFT JOIN orders o ON o.id=s.order_id WHERE s.card_id=$1 ORDER BY s.created_at DESC`, [req.params.id]);
-    res.json({ subscriptions: result.rows });
-  } catch (error) { res.status(500).json({ message: "سوابق اشتراک در دسترس نیست" }); }
-});
-
 router.post("/subscriptions", async (req, res) => {
   const cardId = clean(req.body?.cardId, 50);
   const months = Number(req.body?.months);
@@ -871,6 +839,38 @@ router.put("/admin/settings", requirePermission("digital_cards.manage"), async (
     }
     res.json(await getPlanSettings());
   } catch (error) { res.status(500).json({ message: "ذخیره تنظیمات ممکن نشد" }); }
+});
+
+router.get("/:id/stats", async (req, res) => {
+  try {
+    const owned = await query("SELECT id FROM digital_cards WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL", [req.params.id, req.user.id]);
+    if (!owned.rowCount) return fail(res, 404, "کارت پیدا نشد");
+    const account = await accountEntitlements(req.user.id, query, req.user.role);
+    if (!account.plan.features.fullAnalytics) {
+      const result = await query(`SELECT 'view' AS event_type,COUNT(*)::int AS count FROM digital_card_events WHERE card_id=$1 AND event_type='view'`, [req.params.id]);
+      return res.json({ events: result.rows, daily: [], monthly: [], detailedAvailable: false });
+    }
+    const [totals, daily, monthly] = await Promise.all([
+      query(`SELECT event_type, COUNT(*)::int AS count FROM digital_card_events WHERE card_id=$1 GROUP BY event_type ORDER BY event_type`, [req.params.id]),
+      query(`SELECT date_trunc('day',created_at)::date AS date,event_type,COUNT(*)::int AS count
+        FROM digital_card_events WHERE card_id=$1 AND created_at>=NOW()-INTERVAL '30 days'
+        GROUP BY date_trunc('day',created_at)::date,event_type ORDER BY date DESC,event_type`, [req.params.id]),
+      query(`SELECT date_trunc('month',created_at)::date AS month,event_type,COUNT(*)::int AS count
+        FROM digital_card_events WHERE card_id=$1 AND created_at>=NOW()-INTERVAL '12 months'
+        GROUP BY date_trunc('month',created_at)::date,event_type ORDER BY month DESC,event_type`, [req.params.id]),
+    ]);
+    res.json({ events: totals.rows, daily: daily.rows, monthly: monthly.rows, detailedAvailable: true });
+  } catch (error) { res.status(500).json({ message: "گزارش کارت در دسترس نیست" }); }
+});
+
+router.get("/:id/subscriptions", async (req, res) => {
+  try {
+    const owned = await query("SELECT id FROM digital_cards WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL", [req.params.id, req.user.id]);
+    if (!owned.rowCount) return fail(res, 404, "کارت پیدا نشد");
+    const result = await query(`SELECT s.id,s.plan_code,s.plan_months,s.amount,s.starts_at,s.ends_at,s.created_at,o.id AS order_id,o.status AS order_status,o.payment_ref_number
+      FROM digital_card_subscriptions s LEFT JOIN orders o ON o.id=s.order_id WHERE s.card_id=$1 ORDER BY s.created_at DESC`, [req.params.id]);
+    res.json({ subscriptions: result.rows });
+  } catch (error) { res.status(500).json({ message: "سوابق اشتراک در دسترس نیست" }); }
 });
 
 module.exports = router;

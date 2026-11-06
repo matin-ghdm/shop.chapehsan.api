@@ -88,6 +88,7 @@ async function ensureDigitalCards() {
       UNIQUE(card_id, notification_key)
     )
   `);
+  await query(`ALTER TABLE digital_card_notifications ADD COLUMN IF NOT EXISTS provider_response JSONB, ADD COLUMN IF NOT EXISTS provider_http_status INTEGER`);
   await query(`CREATE INDEX IF NOT EXISTS digital_card_notifications_due_idx ON digital_card_notifications(status,next_attempt_at) WHERE status IN ('pending','sending')`);
   await query(`
     CREATE TABLE IF NOT EXISTS digital_card_leads (

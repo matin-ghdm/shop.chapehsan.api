@@ -84,7 +84,10 @@ async function sendTemplate(mobile, id, parameters) {
   const data = await response.json().catch(() => null);
   if (!response.ok || !data) {
     console.error("sms.ir HTTP error:", response.status, data);
-    throw httpError("ارسال پیامک ناموفق بود", 502, "SMS_HTTP_ERROR");
+    const error = httpError("ارسال پیامک ناموفق بود", 502, "SMS_HTTP_ERROR");
+    error.providerResponse = data;
+    error.providerHttpStatus = response.status;
+    throw error;
   }
 
   const status = Number(data.status);
@@ -94,7 +97,10 @@ async function sendTemplate(mobile, id, parameters) {
       data?.message ||
       (Array.isArray(data?.messages) && data.messages[0]) ||
       "ارسال پیامک ناموفق بود";
-    throw httpError(String(message), 502, "SMS_API_ERROR");
+    const error = httpError(String(message), 502, "SMS_API_ERROR");
+    error.providerResponse = data;
+    error.providerHttpStatus = response.status;
+    throw error;
   }
 
   return data;

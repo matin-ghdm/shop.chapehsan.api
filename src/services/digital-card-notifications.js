@@ -11,6 +11,7 @@ const NOTIFICATION_SETTINGS = {
 };
 
 const MESSAGE_TEXT = {
+  test: "این پیامک آزمایشی است.",
   trial_started: "دورهٔ آزمایشی کارت ویزیت دیجیتال شما فعال شد.",
   trial_reminder: "دورهٔ آزمایشی کارت ویزیت دیجیتال شما به‌زودی پایان می‌یابد.",
   trial_expired: "دورهٔ آزمایشی کارت ویزیت دیجیتال شما پایان یافته است.",
@@ -20,6 +21,7 @@ const MESSAGE_TEXT = {
 };
 
 const STATUS_TEXT = {
+  test: "این پیامک آزمایشی است.",
   trial_started: "دورهٔ آزمایشی فعال شد",
   trial_reminder: "پایان آزمایش نزدیک است",
   trial_expired: "دورهٔ آزمایشی پایان یافت",
@@ -154,14 +156,14 @@ async function sendClaimedNotification(item, settings) {
   }
   try {
     const params = buildTemplateParameters(item, settings);
-    await smsir.sendTemplate(item.phone, Number(settings.sms_template_id), params);
-    await query(`UPDATE digital_card_notifications SET status='sent',sent_at=NOW(),last_error=NULL,updated_at=NOW() WHERE id=$1`, [item.id]);
+    const response = await smsir.sendTemplate(item.phone, Number(settings.sms_template_id), params);
+    await query(`UPDATE digital_card_notifications SET status='sent',sent_at=NOW(),last_error=NULL,provider_response=$2,provider_http_status=NULL,updated_at=NOW() WHERE id=$1`, [item.id, JSON.stringify(response)]);
   } catch (error) {
     const status = item.attempts >= 5 ? "failed" : "pending";
     const delayMinutes = Math.min(60, item.attempts * 5);
     await query(`UPDATE digital_card_notifications SET status=$2,
-      next_attempt_at=NOW()+($3::text||' minutes')::interval,last_error=$4,updated_at=NOW() WHERE id=$1`,
-      [item.id, status, delayMinutes, String(error?.message || "SMS delivery failed").slice(0, 300)]);
+      next_attempt_at=NOW()+($3::text||' minutes')::interval,last_error=$4,provider_response=$5,provider_http_status=$6,updated_at=NOW() WHERE id=$1`,
+      [item.id, status, delayMinutes, String(error?.message || "SMS delivery failed").slice(0, 300), JSON.stringify(error?.providerResponse ?? null), error?.providerHttpStatus ?? null]);
     console.error("Digital card SMS notification failed:", error?.message || "unknown error");
   }
 }

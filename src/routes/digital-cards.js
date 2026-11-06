@@ -765,6 +765,17 @@ router.put("/admin/cards/:id/featured", requirePermission("digital_cards.manage"
   }
 });
 
+router.get("/admin/notifications", requirePermission("digital_cards.manage"), async (_req, res) => {
+  try {
+    const result = await query(`SELECT n.id,n.kind,n.status,n.attempts,n.last_error,n.provider_response,
+      n.provider_http_status,n.created_at,n.updated_at,n.sent_at,c.title,u.phone
+      FROM digital_card_notifications n JOIN digital_cards c ON c.id=n.card_id
+      JOIN users u ON u.id=c.user_id ORDER BY n.updated_at DESC,n.id DESC LIMIT 100`);
+    res.set("Cache-Control", "no-store");
+    res.json({ notifications: result.rows });
+  } catch { res.status(500).json({ message: "دریافت گزارش پیامک‌ها ممکن نشد" }); }
+});
+
 router.get("/admin/subscriptions", requirePermission("digital_cards.manage"), async (_req, res) => {
   try {
     const result = await query(`SELECT s.id,s.card_id,s.user_id,s.plan_code,s.plan_months,s.amount,s.starts_at,s.ends_at,s.created_at,s.granted_by,
@@ -854,6 +865,45 @@ router.put("/admin/templates", requirePermission("digital_cards.manage"), async 
 
 router.get("/admin/settings", requirePermission("digital_cards.manage"), async (_req, res) => {
   try { res.json(await getPlanSettings()); } catch (error) { res.status(500).json({ message: "تنظیمات در دسترس نیست" }); }
+});
+
+const smsTestsInProgress = new Set();
+
+router.post("/admin/sms-test", requirePermission("digital_cards.manage"), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const userId = req.user.id;
+  if (smsTestsInProgress.has(userId)) {
+    return fail(res, 429, "برای ارسال دوبارهٔ پیامک آزمایشی کمی صبر کنید.");
+  }
+  smsTestsInProgress.add(userId);
+  try {
+    const settings = await getPlanSettings();
+    const templateId = Number(settings.sms_template_id);
+    if (!Number.isSafeInteger(templateId) || templateId < 1) {
+      return fail(res, 400, "ابتدا شناسهٔ قالب پیامک را ذخیره کنید.");
+    }
+    const account = await query("SELECT phone FROM users WHERE id=$1", [userId]);
+    const phone = account.rows[0]?.phone;
+    if (!/^09\d{9}$/.test(String(phone || "").trim())) {
+      return fail(res, 400, "شمارهٔ موبایل حساب مدیریت معتبر نیست.");
+    }
+    const { buildTemplateParameters } = require("../services/digital-card-notifications");
+    const parameters = buildTemplateParameters({ kind: "test" }, settings);
+    const { sendTemplate } = require("../services/smsir");
+    const providerResponse = await sendTemplate(phone, templateId, parameters);
+    return res.json({ message: "SMS.ir پیامک آزمایشی را پذیرفت.", providerResponse });
+  } catch (error) {
+    if (error?.code?.startsWith("SMS_")) {
+      return res.status(502).json({
+        message: error.message,
+        providerResponse: error.providerResponse ?? null,
+        providerHttpStatus: error.providerHttpStatus ?? null,
+      });
+    }
+    return fail(res, 502, "ارسال پیامک آزمایشی ممکن نشد. تنظیمات قالب و اتصال سرویس را بررسی کنید.");
+  } finally {
+    setTimeout(() => smsTestsInProgress.delete(userId), 30_000).unref();
+  }
 });
 
 router.put("/admin/settings", requirePermission("digital_cards.manage"), async (req, res) => {

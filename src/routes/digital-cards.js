@@ -875,17 +875,18 @@ router.post("/admin/sms-test", requirePermission("digital_cards.manage"), async 
   if (smsTestsInProgress.has(userId)) {
     return fail(res, 429, "برای ارسال دوبارهٔ پیامک آزمایشی کمی صبر کنید.");
   }
+  const phone = typeof req.body?.phone === "string"
+    ? req.body.phone.trim().replace(/[۰-۹٠-٩]/g, digit => String("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩".indexOf(digit) % 10))
+    : "";
+  if (!/^09\d{9}$/.test(phone)) {
+    return fail(res, 400, "شمارهٔ موبایل مقصد را به‌صورت ۱۱ رقمی و با ۰۹ وارد کنید.");
+  }
   smsTestsInProgress.add(userId);
   try {
     const settings = await getPlanSettings();
     const templateId = Number(settings.sms_template_id);
     if (!Number.isSafeInteger(templateId) || templateId < 1) {
       return fail(res, 400, "ابتدا شناسهٔ قالب پیامک را ذخیره کنید.");
-    }
-    const account = await query("SELECT phone FROM users WHERE id=$1", [userId]);
-    const phone = account.rows[0]?.phone;
-    if (!/^09\d{9}$/.test(String(phone || "").trim())) {
-      return fail(res, 400, "شمارهٔ موبایل حساب مدیریت معتبر نیست.");
     }
     const { buildTemplateParameters } = require("../services/digital-card-notifications");
     const parameters = buildTemplateParameters({ kind: "test" }, settings);

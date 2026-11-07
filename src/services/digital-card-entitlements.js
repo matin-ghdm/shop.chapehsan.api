@@ -73,6 +73,15 @@ function dataCounts(data = {}) {
   };
 }
 
+function validGalleryCrop(crop) {
+  if (!crop || typeof crop !== "object" || Array.isArray(crop) || Object.keys(crop).length !== 9) return false;
+  return [crop.sourceWidth, crop.sourceHeight, crop.frameWidth, crop.frameHeight]
+    .every((value) => Number.isFinite(value) && value > 0 && value <= 60_000_000)
+    && [0, 90, 180, 270].includes(crop.rotation) && typeof crop.contain === "boolean"
+    && Number.isFinite(crop.zoom) && crop.zoom >= 0.1 && crop.zoom <= 4
+    && Number.isFinite(crop.x) && Number.isFinite(crop.y);
+}
+
 function validateCardDataShape(data = {}) {
   const errors = [];
   const arrays = ["phones", "socialLinks", "addresses", "customLinks", "portfolio", "services", "gallery", "products", "catalogs", "productCategories", "paymentAccounts", "hoursSchedule"];
@@ -87,7 +96,11 @@ function validateCardDataShape(data = {}) {
       if (data[key].some((value) => typeof value !== "string" || value.length > 80)) errors.push({ field: key, reason: "invalid_item" });
       continue;
     }
-    if (data[key].some((item) => !item || typeof item !== "object" || Array.isArray(item) || Object.values(item).some((value) => typeof value !== "string" && typeof value !== "boolean" && value != null))) {
+    if (data[key].some((item) => !item || typeof item !== "object" || Array.isArray(item) ||
+      Object.entries(item).some(([field, value]) => {
+        if (key === "gallery" && field === "crop") return value != null && !validGalleryCrop(value);
+        return typeof value !== "string" && typeof value !== "boolean" && value != null;
+      }))) {
       errors.push({ field: key, reason: "invalid_item" });
     } else if (data[key].some((item) => Object.values(item).some((value) => typeof value === "string" && value.length > 2000))) {
       errors.push({ field: key, reason: "item_too_long" });

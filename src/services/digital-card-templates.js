@@ -1,4 +1,5 @@
 const TEMPLATE_CATALOG = [
+  { id: "motion", label: "موشن · کاور تمام‌صفحه", free: true },
   { id: "ribbon", label: "ریبون · ستون رنگی", free: true },
   { id: "studio", label: "استودیو · سفید و سبزآبی", free: true },
   { id: "orbit", label: "اوربیت · تم گوشی", free: true },

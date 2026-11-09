@@ -8,9 +8,8 @@ const { formatWorkSchedule } = require("../lib/digital-card-hours");
 const { TIERS, DEFAULT_PLANS, planSnapshot, planPrice, publicPlans, validateCardDataShape, validateCardData, publicCardData } = require("../services/digital-card-entitlements");
 
 const router = express.Router();
-const { TEMPLATE_CATALOG, isTemplateEnabled, canSelectTemplate, adminTemplates, validateTemplateUpdates } = require("../services/digital-card-templates");
+const { TEMPLATE_CATALOG, isTemplateFree, isTemplateEnabled, canSelectTemplate, adminTemplates, validateTemplateUpdates } = require("../services/digital-card-templates");
 const templates = new Set(TEMPLATE_CATALOG.map((item) => item.id));
-const freeTemplates = new Set(TEMPLATE_CATALOG.filter((item) => item.free).map((item) => item.id));
 const paidTemplates = TEMPLATE_CATALOG.filter((item) => !item.free);
 const eventTypes = new Set(["view", "mobile", "phone", "map", "messenger", "social", "website", "email"]);
 const countedCardAssets = `FROM digital_card_assets a
@@ -318,14 +317,15 @@ router.get("/templates", async (req, res) => {
   try {
     const settings = await getPlanSettings();
     const owned = await query(`SELECT template FROM digital_card_template_purchases WHERE user_id=$1 AND paid_at IS NOT NULL
-      UNION SELECT template FROM digital_cards WHERE user_id=$1 AND template IN ('luxury','shop','medical')`, [req.user.id]);
+      UNION SELECT template FROM digital_cards WHERE user_id=$1`, [req.user.id]);
     const ownedTemplates = new Set(owned.rows.map((row) => row.template));
     res.set("Cache-Control", "no-store").json({ templates: TEMPLATE_CATALOG.filter((item) => settings[`template_${item.id}_deleted`] !== true).map((item) => {
       const enabled = isTemplateEnabled(settings, item.id);
-      return { ...item, enabled,
-        active: enabled && (item.free || (settings["template_" + item.id + "_active"] === true && Number(settings["template_" + item.id + "_price"]) >= 100)),
-        owned: item.free || isSiteAdmin(req.user) || ownedTemplates.has(item.id),
-        price: item.free ? 0 : Number(settings["template_" + item.id + "_price"] || 0),
+      const free = isTemplateFree(settings, item.id);
+      return { ...item, enabled, free,
+        active: enabled && (free || (settings["template_" + item.id + "_active"] === true && Number(settings["template_" + item.id + "_price"]) >= 100)),
+        owned: free || isSiteAdmin(req.user) || ownedTemplates.has(item.id),
+        price: free ? 0 : Number(settings["template_" + item.id + "_price"] || 0),
       };
     }) });
   } catch (error) { res.status(500).json({ message: "دریافت قالب‌ها ممکن نشد" }); }
@@ -333,12 +333,13 @@ router.get("/templates", async (req, res) => {
 
 router.post("/templates/purchase", async (req, res) => {
   const template = clean(req.body?.template, 30);
-  const product = paidTemplates.find((item) => item.id === template);
+  const product = templates.has(template);
   if (!product) return fail(res, 400, "این قالب قابل خرید نیست");
   if (isSiteAdmin(req.user)) return res.json({ owned: true });
   let client;
   try {
     const settings = await getPlanSettings();
+    if (isTemplateFree(settings, template)) return fail(res, 400, "این قالب رایگان است");
     const amount = Number(settings[`template_${template}_price`]);
     if (!isTemplateEnabled(settings, template) || settings[`template_${template}_active`] !== true || !Number.isSafeInteger(amount) || amount < 100) return fail(res, 503, "فروش این قالب در حال حاضر فعال نیست");
     client = await pool.connect();
@@ -493,7 +494,7 @@ router.post("/", async (req, res) => {
         await client.query("ROLLBACK");
         return fail(res, 409, `سقف ${account.plan.limits.activeCards} کارت در پلن ${account.plan.label} پر شده است. برای ساخت کارت جدید، یکی از کارت‌ها را حذف کنید یا پلن را ارتقا دهید.`);
       }
-      if (!isAdmin && !freeTemplates.has(template)) {
+      if (!isAdmin && !isTemplateFree(account.settings, template)) {
         if (account.plan.features.allTemplates) {
           // The account subscription includes every template.
         } else {
@@ -560,7 +561,7 @@ router.put("/:id", async (req, res) => {
       const quotaErrors = validateCardData(data, owned.rows[0].data || {}, account.plan);
       if (quotaErrors.length) return res.status(403).json({ message: "این تغییر از سقف پلن شما بیشتر است", limits: quotaErrors });
     }
-    if (!isSiteAdmin(req.user) && !freeTemplates.has(template)) {
+    if (!isSiteAdmin(req.user) && !isTemplateFree(account.settings, template)) {
       if (account.plan.features.allTemplates) {
         // The account subscription includes every template.
       } else {
@@ -850,8 +851,11 @@ router.put("/admin/templates", requirePermission("digital_cards.manage"), async 
     client = await pool.connect();
     await client.query("BEGIN");
     for (const item of updates) {
+      for (const key of ["enabled", "free", "price", "active"]) {
+        if (item[key] === undefined) continue;
       await client.query(`INSERT INTO digital_card_settings(key,value) VALUES($1,$2::jsonb)
-        ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()`, [`template_${item.id}_enabled`, JSON.stringify(item.enabled)]);
+        ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()`, [`template_${item.id}_${key}`, JSON.stringify(item[key])]);
+      }
     }
     const result = await client.query("SELECT key,value FROM digital_card_settings");
     await client.query("COMMIT");

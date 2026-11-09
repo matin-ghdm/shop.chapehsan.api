@@ -47,13 +47,14 @@ async function ensureDigitalCards() {
     CREATE TABLE IF NOT EXISTS digital_card_template_purchases (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      template TEXT NOT NULL CHECK (template IN ('luxury','shop','medical')),
+      template TEXT NOT NULL,
       amount BIGINT NOT NULL CHECK (amount >= 100),
       order_id UUID NOT NULL UNIQUE REFERENCES orders(id) ON DELETE CASCADE,
       paid_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await query(`ALTER TABLE digital_card_template_purchases DROP CONSTRAINT IF EXISTS digital_card_template_purchases_template_check`);
   await query(`CREATE INDEX IF NOT EXISTS digital_card_template_purchase_user_idx ON digital_card_template_purchases(user_id,template,paid_at)`);
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS digital_card_template_purchase_paid_unique_idx ON digital_card_template_purchases(user_id,template) WHERE paid_at IS NOT NULL`);
   await query(`

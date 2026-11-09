@@ -55,7 +55,7 @@ test("template management is protected by the existing management permission and
   for (const verb of ["get", "put"]) assert.equal(api.routes.get(`${verb} /admin/templates`)[0].permission, "digital_cards.manage");
   const result = await api.call("get", "/admin/templates");
   assert.equal(result.status, 200);
-  assert.equal(result.data.templates.length, 11);
+  assert.equal(result.data.templates.length, 12);
   assert.ok(result.data.templates.every((item) => item.enabled));
 });
 

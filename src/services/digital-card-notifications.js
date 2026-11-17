@@ -25,7 +25,7 @@ const STATUS_TEXT = {
   trial_started: "دورهٔ آزمایشی فعال شد",
   trial_reminder: "پایان آزمایش نزدیک است",
   trial_expired: "دورهٔ آزمایشی پایان یافت",
-  subscription_paid: "خرید یا تمدید اشتراک تأیید شد",
+  subscription_paid: "اشتراک کارت دیجیتال فعال شد",
   subscription_reminder: "پایان اشتراک نزدیک است",
   subscription_expired: "اعتبار اشتراک پایان یافت",
 };
@@ -41,10 +41,15 @@ function notificationEnabled(settings, kind) {
   return Boolean(eventSetting && settings.sms_enabled === true && settings[eventSetting] !== false && Number(settings.sms_template_id) > 0);
 }
 
-function buildMessage(kind, title) {
+function buildMessage(kind, title, subscription = null) {
   const text = MESSAGE_TEXT[kind];
   if (!text) throw new Error("نوع اعلان کارت دیجیتال معتبر نیست");
   const safeTitle = String(title || "کارت دیجیتال").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 80);
+  if (kind === "subscription_paid" && subscription?.starts_at && subscription?.ends_at) {
+    const plan = { bronze: "برنزی", silver: "نقره‌ای", gold: "طلایی" }[subscription.plan_code] || "کارت دیجیتال";
+    const expires = new Intl.DateTimeFormat("fa-IR", { timeZone: "Asia/Tehran", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(subscription.ends_at));
+    return `${safeTitle}: اشتراک ${plan} ${Number(subscription.months).toLocaleString("fa-IR")} ماهه فعال شد. پایان اعتبار: ${expires}. مدیریت کارت:`;
+  }
   return `${safeTitle}: ${text}`;
 }
 
@@ -58,7 +63,7 @@ function buildTemplateParameters(item, settings) {
     throw new Error("پارامترهای قالب پیامک معتبر نیستند");
   }
   return [
-    { name: messageParam, value: buildMessage(item.kind, item.title) },
+    { name: messageParam, value: buildMessage(item.kind, item.title, item.subscription) },
     { name: linkParam, value: "https://chapehsan.com/my-digital-cards" },
   ];
 }
@@ -137,7 +142,12 @@ async function claimNotifications(limit = 20) {
       RETURNING n.id,n.card_id,n.kind,n.attempts`, [limit]);
     await client.query("COMMIT");
     if (!result.rowCount) return [];
-    const details = await query(`SELECT n.id,n.card_id,n.kind,n.attempts,c.title,c.public_id,u.phone
+    const details = await query(`SELECT n.id,n.card_id,n.kind,n.attempts,c.title,c.public_id,u.phone,
+      (SELECT json_build_object('plan_code',s.plan_code,'months',s.plan_months,'starts_at',s.starts_at,'ends_at',s.ends_at)
+        FROM digital_card_subscriptions s
+        WHERE s.card_id=n.card_id AND n.notification_key='subscription_paid_'||s.id::text
+          AND s.starts_at IS NOT NULL AND EXISTS (SELECT 1 FROM orders o WHERE o.id=s.order_id AND o.paid_at IS NOT NULL)
+        LIMIT 1) AS subscription
       FROM digital_card_notifications n JOIN digital_cards c ON c.id=n.card_id
       JOIN users u ON u.id=c.user_id WHERE n.id=ANY($1::uuid[])`, [result.rows.map((row) => row.id)]);
     return details.rows;
@@ -152,6 +162,10 @@ async function claimNotifications(limit = 20) {
 async function sendClaimedNotification(item, settings) {
   if (!notificationEnabled(settings, item.kind)) {
     await query("UPDATE digital_card_notifications SET status='skipped',updated_at=NOW() WHERE id=$1", [item.id]);
+    return;
+  }
+  if (item.kind === "subscription_paid" && !item.subscription) {
+    await query("UPDATE digital_card_notifications SET status='skipped',last_error='Subscription activation not confirmed',updated_at=NOW() WHERE id=$1", [item.id]);
     return;
   }
   try {

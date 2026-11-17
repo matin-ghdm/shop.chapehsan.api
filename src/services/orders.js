@@ -212,7 +212,16 @@ const ORDER_COLUMNS_ALIASED = ORDER_COLUMNS.split(", ")
 const ORDER_USER_FIELDS = `
   TRIM(CONCAT(COALESCE(u.name, ''), ' ', COALESCE(u.lname, ''))) AS user_name,
   u.phone AS user_phone,
-  EXISTS (SELECT 1 FROM download_purchases dp WHERE dp.order_id = o.id) AS is_digital`;
+  (EXISTS (SELECT 1 FROM download_purchases dp WHERE dp.order_id = o.id)
+    OR EXISTS (SELECT 1 FROM digital_card_subscriptions s WHERE s.order_id = o.id)
+    OR EXISTS (SELECT 1 FROM digital_card_template_purchases t WHERE t.order_id = o.id)) AS is_digital,
+  CASE WHEN EXISTS (SELECT 1 FROM digital_card_subscriptions s WHERE s.order_id=o.id) THEN 'subscription'
+    WHEN EXISTS (SELECT 1 FROM digital_card_template_purchases t WHERE t.order_id=o.id) THEN 'template'
+    WHEN EXISTS (SELECT 1 FROM download_purchases dp WHERE dp.order_id=o.id) THEN 'download'
+    ELSE 'physical' END AS fulfillment_type,
+  (SELECT json_build_object('card_id',s.card_id,'plan_code',s.plan_code,'months',s.plan_months,
+    'starts_at',s.starts_at,'ends_at',s.ends_at)
+    FROM digital_card_subscriptions s WHERE s.order_id=o.id LIMIT 1) AS subscription`;
 
 const ORDER_ADDRESS_FIELDS = `
   a.title AS address_title,
@@ -653,9 +662,11 @@ async function createOrder(payload, currentUser) {
 }
 
 async function updateOrder(id, payload, options = {}) {
-  const digital = await query('SELECT 1 FROM download_purchases WHERE order_id=$1',[id]);
+  const digital = await query(`SELECT 1 FROM download_purchases WHERE order_id=$1
+    UNION ALL SELECT 1 FROM digital_card_subscriptions WHERE order_id=$1
+    UNION ALL SELECT 1 FROM digital_card_template_purchases WHERE order_id=$1`,[id]);
   if (digital.rowCount && !(options.customerId && payload.status === "canceled")) {
-    throw httpError("سفارش فایل دیجیتال قابل تغییر نیست", 403);
+    throw httpError("سفارش دیجیتال خودکار انجام می‌شود و مراحل چاپ ندارد", 403, "DIGITAL_ORDER_AUTOMATIC");
   }
   const current = await findById(id);
   if (!current) {
